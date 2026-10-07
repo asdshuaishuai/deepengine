@@ -1,0 +1,20 @@
+import {
+  "deepengine/engine/runtime",
+  "moonbitlang/core/env",
+}
+
+options(
+  "is-main": true,
+  "native-stub": [ "stub.c" ],
+  targets: {
+    // 本包只在 native 后端有意义（bridge extern "c" 仅 native 合法）
+    "main.mbt": [ "native" ],
+    "main_stub.mbt": [ "not", "native" ],
+  },
+  link: {
+    "native": {
+      "stub-cc-flags": "-I../../raylib/src",
+      "cc-link-flags": "-L../lib/gpu -lraylib -framework Cocoa -framework IOKit -framework CoreVideo -framework OpenGL -framework QuartzCore",
+    },
+  },
+)

@@ -1,0 +1,24 @@
+{
+  "probes": [
+    {
+      "name": "wrong_order_fails",
+      "script": "up:1, right:6, down:4",
+      "expect": "boxes_on==0"
+    },
+    {
+      "name": "first_box_home",
+      "script": "up:1, right:7, down:3, left:1, down:2",
+      "expect": "boxes_on==1"
+    },
+    {
+      "name": "walls_hold",
+      "script": "up:9",
+      "expect": "y==1"
+    },
+    {
+      "name": "beat_the_puzzle",
+      "script": "up:1, right:7, down:3, left:1, down:2, right:1, up:5, left:1, down:4, right:1, down:1, left:2, up:1, left:1, down:1",
+      "expect": "state==won"
+    }
+  ]
+}

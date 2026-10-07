@@ -1,0 +1,8 @@
+import {
+  "deepengine/engine/kernel",
+  "deepengine/engine/scene",
+}
+
+options(
+  // 渲染配置契约：纯数据层，零渲染依赖（可被 moon test 直接测）
+)

@@ -1,0 +1,19 @@
+{
+  "probes": [
+    {
+      "name": "reach_step1",
+      "script": "right:16, jump:1, right:33, wait:5",
+      "expect": "coins>=1"
+    },
+    {
+      "name": "spike_guards_floor",
+      "script": "right:110",
+      "expect": "state==dead"
+    },
+    {
+      "name": "beat_the_game",
+      "script": "right:16, jump:1, right:33, right:12, jump:1, right:31, right:14, jump:1, right:32, right:6",
+      "expect": "state==won"
+    }
+  ]
+}

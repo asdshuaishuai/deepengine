@@ -1,0 +1,6 @@
+{
+  "name": "deepengine/spike",
+  "version": "0.1.0",
+  "description": "Probe: MoonBit driving raylib through C FFI",
+  "readme": "README.md"
+}

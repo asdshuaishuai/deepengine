@@ -1,0 +1,15 @@
+import {
+  "moonbitlang/core/math",
+  "moonbitlang/core/env",
+}
+
+options(
+  "is-main": true,
+  "native-stub": [ "stub.c" ],
+  link: {
+    "native": {
+      "stub-cc-flags": "-I../../raylib/src",
+      "cc-link-flags": "-L../../raylib/src -lraylib -framework Cocoa -framework IOKit -framework CoreVideo -framework OpenGL -framework QuartzCore",
+    },
+  },
+)

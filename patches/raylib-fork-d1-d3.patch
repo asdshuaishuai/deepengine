@@ -1,0 +1,83 @@
+diff --git a/src/platforms/rcore_memory.c b/src/platforms/rcore_memory.c
+index 5d9461c..b4cb46e 100644
+--- a/src/platforms/rcore_memory.c
++++ b/src/platforms/rcore_memory.c
+@@ -368,7 +368,11 @@ double GetTime(void)
+     QueryPerformanceCounter(&currentTicks);
+ 
+     time = (double)(currentTicks.QuadPart - CORE.Time.base)/(double)platform.timerFrequency.QuadPart;
+-#elif defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__EMSCRIPTEN__)
++// DEEPENGINE: __APPLE__ added (see FORK.md D1). Without it time is always 0 on macOS, so the busy-wait
++// in WaitTime() never terminates and any frame-limited loop hangs at 100% CPU.
++// WaitTime() below already handles __APPLE__ via usleep(), so the platform was
++// half-supported: sleeping worked, measuring did not. See FORK.md (D1).
++#elif defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__EMSCRIPTEN__) || defined(__APPLE__)
+     struct timespec ts = { 0 };
+     clock_gettime(CLOCK_MONOTONIC, &ts);
+     unsigned long long nanoSeconds = (unsigned long long)ts.tv_sec*1000000000LLU + (unsigned long long)ts.tv_nsec;
+diff --git a/src/rcore.c b/src/rcore.c
+index 7d64238..ce1fdf0 100644
+--- a/src/rcore.c
++++ b/src/rcore.c
+@@ -1816,6 +1816,13 @@ void TakeScreenshot(const char *fileName)
+     // Security check to (partially) avoid malicious code
+     if (strchr(fileName, '\'') != NULL) { TRACELOG(LOG_WARNING, "SYSTEM: Provided fileName could be potentially malicious, avoid [\'] character"); return; }
+ 
++    // DEEPENGINE: flush any pending drawing before reading the framebuffer (see FORK.md D3).
++    // rlgl renders through a batch: Draw*() calls queue geometry and only EndDrawing()
++    // submits it. TakeScreenshot() reads the framebuffer directly, so calling it between
++    // drawing calls used to capture a frame without that geometry — typically just the
++    // background. Flushing here makes the function correct regardless of call site.
++    rlDrawRenderBatchActive();
++
+     // Apply content scaling if required
+     Vector2 scale = { 1.0f, 1.0f };
+     if (FLAG_IS_SET(CORE.Window.flags, FLAG_WINDOW_HIGHDPI)) scale = GetWindowScaleDPI();
+@@ -4303,7 +4310,10 @@ void InitTimer(void)
+     timeBeginPeriod(1); // Setup high-resolution timer to 1ms (granularity of 1-2 ms)
+ #endif
+ 
+-#if defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__EMSCRIPTEN__)
++// DEEPENGINE: __APPLE__ added (see FORK.md D1). InitTimer() sets CORE.Time.base, which
++// GetTime() subtracts; on macOS both were missing the platform branch, so the pair
++// reported no elapsed time and frame limiting spun forever.
++#if defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__EMSCRIPTEN__) || defined(__APPLE__)
+     struct timespec now = { 0 };
+ 
+     if (clock_gettime(CLOCK_MONOTONIC, &now) == 0) // Success
+diff --git a/src/rlgl.h b/src/rlgl.h
+index 834ef36..e19c135 100644
+--- a/src/rlgl.h
++++ b/src/rlgl.h
+@@ -3802,6 +3802,23 @@ unsigned char *rlReadScreenPixels(int width, int height)
+     // WARNING: Getting alpha channel! Be careful, it can be transparent if not cleared properly!
+     glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, imgData);
+ 
++// DEEPENGINE: the software backend needs different post-processing (see FORK.md D2).
++// rlsw's sw_framebuffer_output_*() already serializes the color buffer top-down, i.e.
++// in screen order, while the flip below assumes OpenGL's bottom-up layout — applying
++// both flipped the image twice and produced an upside-down result. rlsw also emits
++// BGRA with RLSW_FRAMEBUFFER_OUTPUT_BGRA enabled by default, while GL_RGBA was
++// requested above, so red and blue arrive transposed. Correct the channel order and
++// skip the flip; the hardware path is untouched and keeps the original behaviour.
++#if defined(GRAPHICS_API_OPENGL_SOFTWARE)
++    for (int i = 0; i < width*height*4; i += 4)
++    {
++        unsigned char r = imgData[i];
++
++        imgData[i] = imgData[i + 2];
++        imgData[i + 2] = r;
++        imgData[i + 3] = 255;   // Set alpha component value to 255 (no transparent image retrieval)
++    }
++#else
+     // Flip image vertically
+     // NOTE: Alpha value has already been applied to RGB in framebuffer, not needed anymore
+     for (int y = height - 1; y >= height/2; y--)
+@@ -3826,6 +3843,7 @@ unsigned char *rlReadScreenPixels(int width, int height)
+             imgData[e+3] = 255; // Ditto
+         }
+     }
++#endif
+ 
+     return imgData;     // NOTE: image data should be freed
+ }

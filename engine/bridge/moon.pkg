@@ -1,0 +1,6 @@
+options(
+  targets: {
+    // extern "c" 仅 native 后端合法（moonviz 同款做法）
+    "bridge.mbt": [ "native" ],
+  },
+)

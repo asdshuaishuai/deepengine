@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>deepEngine · AI-native 游戏引擎 Demo</title>
+<style>
+  :root {
+    --bg: #0b0d13; --panel: #141824; --panel2: #1a2030;
+    --border: #232a3d; --text: #e8ebf2; --dim: #8b93a7;
+    --blue: #4a9eff; --green: #30a46c; --red: #e5484d; --gold: #f5a524;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    padding: 28px 20px 60px;
+  }
+  header { text-align: center; margin-bottom: 22px; }
+  h1 { font-size: 26px; font-weight: 700; letter-spacing: 0.5px; }
+  h1 span { color: var(--blue); }
+  .sub { color: var(--dim); font-size: 13px; margin-top: 6px; }
+  .sub b { color: var(--text); font-weight: 600; }
+  .tabs { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; justify-content: center; }
+  .tab {
+    padding: 10px 22px; border-radius: 10px; cursor: pointer; font-size: 15px;
+    background: var(--panel); border: 1px solid var(--border); color: var(--dim);
+    transition: all .15s; user-select: none;
+  }
+  .tab:hover { border-color: #3a4661; color: var(--text); }
+  .tab.active { background: var(--panel2); border-color: var(--blue); color: var(--text); box-shadow: 0 0 0 1px var(--blue) inset; }
+  .tab .tag { display: block; font-size: 11px; color: var(--dim); margin-top: 2px; }
+  .stage {
+    position: relative; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 14px; box-shadow: 0 12px 40px rgba(0,0,0,.45);
+  }
+  canvas { display: block; border-radius: 8px; background: #000; image-rendering: pixelated; }
+  .hud-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 12px; gap: 12px; flex-wrap: wrap;
+  }
+  .hud { font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .hud b { color: var(--text); }
+  .hud .win { color: var(--green); font-weight: 700; }
+  .hud .dead { color: var(--red); font-weight: 700; }
+  .btns { display: flex; gap: 8px; }
+  button.act {
+    padding: 8px 16px; border-radius: 8px; font-size: 13px; cursor: pointer;
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    transition: all .15s;
+  }
+  button.act:hover { border-color: var(--blue); }
+  button.act.primary { background: #14324d; border-color: var(--blue); }
+  .keys { color: var(--dim); font-size: 12px; margin-top: 10px; text-align: center; }
+  kbd {
+    background: var(--panel2); border: 1px solid var(--border); border-bottom-width: 2px;
+    border-radius: 5px; padding: 1px 7px; font-size: 11px; font-family: inherit; color: var(--text);
+  }
+  /* 验证报告弹层 */
+  .report-wrap { display: none; margin-top: 14px; width: 100%; }
+  .report-wrap.show { display: block; }
+  pre.report {
+    background: #0d1017; border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; font-size: 12px; line-height: 1.65; overflow: auto;
+    max-height: 300px; font-family: "SF Mono", Menlo, monospace; color: #b9c2d4;
+  }
+  .reward-1 { color: var(--green); font-weight: 700; }
+  .reward-0 { color: var(--red); font-weight: 700; }
+  .info { margin-top: 26px; max-width: 900px; color: var(--dim); font-size: 12.5px; line-height: 1.8; text-align: center; }
+  .info code { color: var(--gold); font-family: "SF Mono", Menlo, monospace; font-size: 11.5px; }
+  #status { margin-top: 14px; color: var(--dim); font-size: 13px; min-height: 20px; }
+  #status.err { color: var(--red); }
+  /* SVG 角色：部件 transform 以自身包围盒为参照（腿臂绕顶端摆动） */
+  #hero svg { width: 100%; height: 100%; display: block; overflow: visible; }
+  #hero g { transform-box: fill-box; }
+  #hero #legL, #hero #legR, #hero #armL, #hero #armR { transform-origin: 50% 8%; }
+  #hero #head { transform-origin: 50% 100%; }
+  #hero.dead { filter: grayscale(1) brightness(0.8); }
+</style>
+</head>
+<body>
+<header>
+  <h1>deep<span>Engine</span> — AI-native 游戏引擎</h1>
+  <div class="sub">
+    玩法内核为 <b>MoonBit → WebAssembly</b>（与桌面版同一份代码）· 状态投影渲染 · 声明式事实源 <b>.mbg.md</b> · 程序化像素 + 电子音
+  </div>
+</header>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="stage">
+  <div id="canvasWrap" style="position:relative; display:inline-block; line-height:0">
+    <canvas id="cv"></canvas>
+    <div id="hero" style="position:absolute; left:0; top:0; pointer-events:none; will-change:transform; transform-origin:50% 100%"></div>
+  </div>
+  <div class="hud-bar">
+    <div class="hud" id="hud">loading…</div>
+    <div class="btns">
+      <button class="act" id="btnReset">重开 (R)</button>
+      <button class="act primary" id="btnVerify">验证此游戏</button>
+      <input id="seedInput" type="number" value="0" min="0" max="999999"
+             style="width:76px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;font-size:13px" title="角色种子">
+      <button class="act" id="btnSkin">换角色</button>
+    </div>
+  </div>
+  <div id="gallery" style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap"></div>
+  <div class="keys" id="keys"></div>
+  <div class="report-wrap" id="reportWrap"><pre class="report" id="report"></pre></div>
+</div>
+
+<div id="status">正在加载内核 wasm…</div>
+
+<div class="info">
+  每个游戏是一个 <code>.mbg.md</code> 文本文件（关卡 + 物理参数 + 行为探针）——「验证此游戏」会在内核层执行全部探针并输出
+  binary 主分报告（<code>reward</code> / 逐探针结果 / <code>evidence_basis</code> / <code>unsupported_claims</code>）。
+  引擎零图片、零音频文件：你看到的每个像素与听到的每个音符都由参数确定性生成。
+</div>
+
+<!-- 三个游戏的事实源（与 examples/ 目录同文件） -->
+<script type="text/plain" id="src-platformer"># Sky Stairs —— deepEngine 第一个游戏
+
+gravity_side 原型族的平台跳跃。三级台阶直上云端，拿到路上的金币，抵达绿色终点。
+红色尖刺守着地板路线——想走捷径会死。
+
+操作（run 模式）：←/→ 移动，空格跳，R 热重载，ESC 退出。
+
+```mbg
+canvas 960 540 bg:#0b0d13
+
+physics gravity:2000 jump:-700 speed:260
+
+player x:80 y:460 color:#4a9eff
+
+# 地板（含尖刺陷阱）
+platform x:0 y:500 w:960 h:40
+spike x:520 y:484 w:40
+
+# 三级台阶（每级抬升 ~90px，跳高 122px 可达）
+platform x:260 y:420 w:140 h:20 color:#2b3448
+platform x:470 y:330 w:140 h:20 color:#2b3448
+platform x:680 y:240 w:140 h:20 color:#2b3448
+
+# 金币（每级台阶上方，落台即收）
+coin x:290 y:382
+coin x:500 y:292
+coin x:710 y:202
+
+# 终点在顶层台阶上
+goal x:715 y:180 w:56 h:60
+
+# ---- 行为探针（agent 可写、引擎可执行、binary 判定）----
+
+# 走上第一级台阶并吃到金币
+probe reach_step1 script:"right:16, jump:1, right:33, wait:5" expect:"coins>=1"
+
+# 地板捷径被尖刺守死
+probe spike_guards_floor script:"right:110" expect:"state==dead"
+
+# 全程登顶：三级跳抵达终点
+probe beat_the_game script:"right:16, jump:1, right:33, right:12, jump:1, right:31, right:14, jump:1, right:32, right:6" expect:"state==won"
+```
+</script>
+
+<script type="text/plain" id="src-coinrush"># Coin Rush —— agent 驱动创作的第二个游戏
+
+与 Sky Stairs 相同的引擎与原型族（gravity_side），但物理手感完全不同：
+低重力 + 慢速 = 漂浮跳。尖刺铺满谷底，三段浮台横渡，收齐两枚金币落进终点。
+
+本文件由 AI agent 仅通过 .mbg.md 事实源创作——引擎代码零改动。
+
+```mbg
+canvas 960 540 bg:#0d1021
+
+physics gravity:1400 jump:-620 speed:240
+
+player x:60 y:460 color:#30a46c
+
+# 左岸
+platform x:0 y:500 w:300 h:40 color:#2b3448
+
+# 谷底尖刺（300-720，坠落即死）
+spike x:300 y:484 w:420
+
+# 三段浮台
+platform x:380 y:430 w:110 h:20 color:#2b3448
+platform x:560 y:350 w:110 h:20 color:#2b3448
+
+# 对岸（含终点）
+platform x:740 y:430 w:200 h:20 color:#2b3448
+goal x:800 y:370 w:56 h:60
+
+# 金币：第一段浮台上方 + 第二段浮台上方
+coin x:410 y:392
+coin x:590 y:312
+
+# ---- 行为探针 ----
+
+# 第一跳：横渡到浮台一，顺路收金币
+probe hop_p1 script:"right:44, jump:1, right:44, wait:3" expect:"coins>=1"
+
+# 贪心走谷底：坠落尖刺
+probe floor_is_lava script:"right:120" expect:"state==dead"
+
+# 全程：三跳过谷，落进对岸终点
+probe cross_the_gap script:"right:44, jump:1, right:44, right:9, jump:1, right:44, right:17, jump:1, right:57, wait:3" expect:"state==won"
+```
+</script>
+
+<script type="text/plain" id="src-boxpush"># Box Push —— grid_logic 原型族第一个游戏
+
+与平台跳跃（gravity_side）完全不同的骨架：无重力、无物理循环，离散回合移动。
+经典推箱语义：把箱子推到绿色目标格即胜。箱子只能推不能拉，抵墙即阻。
+
+本文件由 AI agent 仅通过 .mbg.md 创作——引擎代码零改动（第二族骨架复用全部管线）。
+
+操作（run 模式）：方向键移动，R 热重载，ESC 退出。
+
+图例：`#` 墙  `p` 玩家  `b` 箱子  `g` 目标格  `.` 地板
+
+```mbg
+mode grid
+
+canvas 640 448
+level 10 7 cell:64
+
+##########
+#........#
+#..p.....#
+#..b.....#
+#..g.....#
+#........#
+##########
+
+# ---- 行为探针 ----
+
+# 向右走一格
+probe step_right script:"right:1" expect:"x==4"
+
+# 墙被尊重：向上狂推停在顶墙下（row0 是墙）
+probe walls_hold script:"up:9" expect:"y==1"
+
+# 推箱取胜：玩家出生在箱子正上方，向下一步即把箱子推进目标格
+probe push_win script:"down:1" expect:"state==won"
+
+# 移动计数：三步成功移动（右右左，路径无箱）
+probe moves_counted script:"right:2, left:1" expect:"moves==3"
+```
+</script>
+
+<script type="module">
+const GAMES = [
+  { id: 'platformer', name: 'Sky Stairs', family: 'gravity_side 平台跳跃', keys: '←/→ 移动 · 空格 跳' },
+  { id: 'coinrush',   name: 'Coin Rush',  family: 'gravity_side 低重力浮岛', keys: '←/→ 移动 · 空格 跳' },
+  { id: 'boxpush',    name: 'Box Push',   family: 'grid_logic 推箱', keys: '↑↓←→ 单格移动' },
+];
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const statusEl = document.getElementById('status');
+const hudEl = document.getElementById('hud');
+const keysEl = document.getElementById('keys');
+const reportWrap = document.getElementById('reportWrap');
+const reportEl = document.getElementById('report');
+
+let wasm = null;
+let cur = GAMES[0];
+let mode = 'physics';
+let keys = { left: false, right: false, jump: false };
+let raf = 0;
+
+// ---------- wasm ----------
+async function boot() {
+  const res = await fetch('../engine/_build/wasm-gc/debug/build/web/web.wasm');
+  const bytes = await res.arrayBuffer();
+  const module = new WebAssembly.Module(bytes, {
+    builtins: ['js-string'], importedStringConstants: '_',
+  });
+  wasm = new WebAssembly.Instance(module, {}).exports;
+  statusEl.textContent = '内核就绪 —— MoonBit wasm-gc，与桌面版同一份 kernel/scene 代码';
+  buildTabs();
+  loadGame(GAMES[0]);
+}
+
+function buildTabs() {
+  const tabs = document.getElementById('tabs');
+  for (const g of GAMES) {
+    const el = document.createElement('div');
+    el.className = 'tab' + (g === cur ? ' active' : '');
+    el.innerHTML = `${g.name}<span class="tag">${g.family}</span>`;
+    el.onclick = () => {
+      cur = g;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      el.classList.add('active');
+      loadGame(g);
+    };
+    tabs.appendChild(el);
+  }
+}
+
+function loadGame(g) {
+  const src = document.getElementById('src-' + g.id).textContent;
+  const r = JSON.parse(wasm.web_load(src));
+  if (!r.ok) {
+    statusEl.textContent = '解析失败：' + r.error;
+    statusEl.className = 'err';
+    return;
+  }
+  mode = r.mode;
+  statusEl.className = '';
+  keysEl.innerHTML = g.keys + ' · <kbd>R</kbd> 重开 · 点击画布生成内容';
+  cv.width = r.w; cv.height = r.h;
+  reportWrap.classList.remove('show');
+  view.dusts = []; view.gridLastCell = null; view.gridAnim = 99;
+  drawFrame();
+  const seed = JSON.parse(wasm.web_frame()).player.seed ?? 0;
+  document.getElementById('seedInput').value = seed;
+  buildHeroSVG(seed);
+  refreshGallery(seed);
+  if (!raf) loop();
+}
+
+// ---------- 主循环（60fps，物理族） ----------
+function loop() {
+  raf = requestAnimationFrame(loop);
+  if (mode !== 'physics') return;
+  wasm.web_step(keys.left ? 1 : 0, keys.right ? 1 : 0, keys.jump ? 1 : 0);
+  drawFrame();
+}
+
+// ---------- 渲染：状态投影（与 native render.mbt 同一套程序化视觉） ----------
+function fsin(x) { return Math.sin(x); } // 宿主直接用真 sin（渲染层，非内核）
+
+function drawFrame() {
+  const f = JSON.parse(wasm.web_frame());
+  if (f.mode === 'grid') drawGrid(f);
+  else drawPhysics(f);
+  updateHud(f);
+}
+
+function drawPhysics(f) {
+  ctx.fillStyle = rgb(f.bg);
+  ctx.fillRect(0, 0, f.w, f.h);
+  drawDusts();
+  // 平台：主体 + 亮边 bevel
+  for (const s of f.solids) {
+    ctx.fillStyle = rgb(s.color);
+    ctx.fillRect(s.x, s.y, s.w, s.h);
+    ctx.fillStyle = rgb(light(s.color, 28));
+    ctx.fillRect(s.x, s.y, s.w, 3);
+  }
+  // 金币：旋转（呼吸半径 + 内圈）
+  for (const c of f.coins) {
+    if (c.taken) continue;
+    const spin = 0.72 + 0.28 * Math.sin(f.frame * 0.18 + c.id);
+    const rad = (c.w / 2) * spin;
+    const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+    ctx.fillStyle = rgb(c.color);
+    ctx.beginPath(); ctx.arc(cx, cy, rad, 0, 7); ctx.fill();
+    ctx.fillStyle = rgb(dark(c.color, 60));
+    ctx.beginPath(); ctx.arc(cx, cy, rad * 0.55, 0, 7); ctx.fill();
+  }
+  // 尖刺：真三角齿
+  ctx.fillStyle = 'rgb(229,72,77)';
+  for (const sp of f.spikes) {
+    const teeth = Math.max(1, Math.round(sp.w / 16));
+    const tw = sp.w / teeth;
+    for (let i = 0; i < teeth; i++) {
+      const x0 = sp.x + i * tw;
+      ctx.beginPath();
+      ctx.moveTo(x0, sp.y + sp.h);
+      ctx.lineTo(x0 + tw / 2, sp.y);
+      ctx.lineTo(x0 + tw, sp.y + sp.h);
+      ctx.fill();
+    }
+  }
+  // 终点：旗座 + 旗杆 + 飘旗
+  if (f.goal) {
+    const g = f.goal;
+    ctx.fillStyle = 'rgb(24,82,54)'; ctx.fillRect(g.x, g.y, g.w, g.h);
+    ctx.fillStyle = 'rgb(230,234,240)'; ctx.fillRect(g.x + g.w/2 - 1.5, g.y - 26, 3, 26);
+    const wave = Math.sin(f.frame * 0.22) * 3;
+    ctx.fillStyle = 'rgb(48,164,108)'; ctx.fillRect(g.x + g.w/2 + 1.5, g.y - 24 + wave, 16, 10);
+  }
+  // 角色由 SVG overlay 渲染（真矢量——种子生成，部件 transform 动画）
+  updateHeroOverlay(f);
+}
+
+// ---------- hero rig 视图态 ----------
+const view = {
+  facing: 1, prevGrounded: true, prevVy: 0, dusts: [], frame: 0,
+  gridLastCell: null, gridAnim: 99, gridDir: [0, 0], heroParts: null,
+};
+function spawnDust(x, y, n) {
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI;
+    view.dusts.push({
+      x, y,
+      vx: Math.cos(a) * (40 + (i % 3) * 25),
+      vy: -Math.abs(Math.sin(a)) * (40 + (i % 3) * 25) - 30,
+      life: 18 + i % 8,
+    });
+  }
+}
+function stepDusts() {
+  view.dusts = view.dusts.filter(d => --d.life > 0);
+  for (const d of view.dusts) {
+    d.x += d.vx / 60; d.y += d.vy / 60; d.vy += 300 / 60;
+  }
+}
+function drawDusts() {
+  for (const d of view.dusts) {
+    const sh = 40 + d.life * 6;
+    ctx.fillStyle = `rgb(${sh},${sh + 6},${sh + 14})`;
+    ctx.fillRect(d.x, d.y, d.life > 10 ? 4 : 3, d.life > 10 ? 4 : 3);
+  }
+}
+function drawFace(hx, hy, hw, hh, frame, f, state) {
+  const eyeY = hy + hh * 0.34;
+  const blink = frame % 160 < 6;
+  const e1 = hx + hw * 0.20, e2 = hx + hw * 0.56;
+  if (state === 'dead') {
+    ctx.fillStyle = 'rgb(235,241,247)';
+    ctx.fillRect(e1, eyeY, 2, 2); ctx.fillRect(e1 + 2, eyeY + 2, 2, 2);
+    ctx.fillRect(e2, eyeY + 2, 2, 2); ctx.fillRect(e2 + 2, eyeY, 2, 2);
+    return;
+  }
+  const happy = state === 'won';
+  const eh = (blink || happy) ? 2 : 4;
+  ctx.fillStyle = 'rgb(235,241,247)';
+  ctx.fillRect(e1, eyeY, 4, eh); ctx.fillRect(e2, eyeY, 4, eh);
+  if (!blink && !happy) {
+    const look = f * 1.2;
+    ctx.fillStyle = 'rgb(20,24,34)';
+    ctx.fillRect(e1 + 1 + look, eyeY + 1, 2, 2); ctx.fillRect(e2 + 1 + look, eyeY + 1, 2, 2);
+  }
+  if (happy) {
+    ctx.fillStyle = 'rgb(20,24,34)';
+    ctx.fillRect(hx + hw * 0.28, eyeY + hh * 0.34, hw * 0.44, 2);
+  }
+}
+function buildHeroSVG(seed) {
+  const hero = document.getElementById('hero');
+  hero.innerHTML = wasm.web_skin_svg(seed);
+  hero.classList.remove('dead');
+  view.heroParts = {
+    legL: hero.querySelector('#legL'), legR: hero.querySelector('#legR'),
+    armL: hero.querySelector('#armL'), armR: hero.querySelector('#armR'),
+    head: hero.querySelector('#head'), char: hero.querySelector('#char'),
+  };
+}
+function setPart(el, transform) { if (el) el.style.transform = transform; }
+function updateHeroOverlay(f) {
+  const hero = document.getElementById('hero');
+  const p = f.player;
+  const frame = f.frame;
+  if (p.vx > 0) view.facing = 1;
+  if (p.vx < 0) view.facing = -1;
+  const fa = view.facing;
+
+  const justLanded = p.grounded && !view.prevGrounded && view.prevVy > 300;
+  if (justLanded) spawnDust(p.x + p.w / 2, p.y + p.h, 7);
+  if (p.grounded && p.vx !== 0 && frame % 12 === 0) spawnDust(p.x + p.w / 2 - fa * 6, p.y + p.h - 2, 1);
+  view.prevGrounded = p.grounded; view.prevVy = p.vy;
+
+  let sw = 1, sh2 = 1;
+  if (f.state === 'dead') { sw = 1.25; sh2 = 0.62; }
+  else if (!p.grounded) {
+    if (p.vy < -80) { sw = 0.90; sh2 = 1.10; }
+    else if (p.vy > 250) { sw = 0.94; sh2 = 1.06; }
+  } else if (justLanded) { sw = 1.18; sh2 = 0.80; }
+
+  hero.style.width = p.w + 'px';
+  hero.style.height = p.h + 'px';
+  const deadRot = f.state === 'dead' ? ' rotate(85deg)' : '';
+  hero.style.transform = `translate(${p.x}px, ${p.y + p.h * (1 - sh2)}px) scale(${fa * sw}, ${sh2})${deadRot}`;
+  hero.classList.toggle('dead', f.state === 'dead');
+
+  const walking = p.grounded && p.vx !== 0 && f.state === 'playing';
+  const ph = frame * 0.35;
+  let la = 0, lb = 0, aa = 0, ab2 = 0;
+  if (f.state === 'won') { aa = ab2 = -150; }
+  else if (!p.grounded) {
+    if (p.vy < -80) { aa = ab2 = -140; la = 25; lb = -15; }
+    else { aa = -60; ab2 = -100; la = 15; lb = -10; }
+  } else if (walking) {
+    la = Math.sin(ph) * 24; lb = -la;
+    aa = -Math.sin(ph) * 28; ab2 = -aa;
+  }
+  setPart(view.heroParts.legL, `rotate(${la}deg)`);
+  setPart(view.heroParts.legR, `rotate(${lb}deg)`);
+  setPart(view.heroParts.armL, `rotate(${aa}deg)`);
+  setPart(view.heroParts.armR, `rotate(${ab2}deg)`);
+  const bob = walking ? Math.sin(ph * 2) : Math.sin(frame * 0.05) * 0.8;
+  setPart(view.heroParts.head, `translateY(${bob}px)`);
+  stepDusts();
+}
+function updateHeroGridOverlay(f, c) {
+  const hero = document.getElementById('hero');
+  view.frame++;
+  const frame = view.frame;
+  const cur = [f.player.cx, f.player.cy];
+  if (view.gridLastCell && (cur[0] !== view.gridLastCell[0] || cur[1] !== view.gridLastCell[1])) {
+    view.gridDir = [cur[0] - view.gridLastCell[0], cur[1] - view.gridLastCell[1]];
+    view.gridAnim = 0;
+  }
+  view.gridLastCell = cur;
+  const t = view.gridAnim < 8 ? view.gridAnim / 8 : 1;
+  const hop = view.gridAnim < 8 ? Math.sin(Math.PI * t) * 10 : 0;
+  const [dx, dy] = view.gridDir;
+  const rx = (cur[0] - dx * (1 - t)) * c;
+  const ry = (cur[1] - dy * (1 - t)) * c - hop;
+  view.gridAnim++;
+
+  let sw = 1, sh2 = 1;
+  if (view.gridAnim < 3) { sw = 1.15; sh2 = 0.85; }
+  else if (view.gridAnim > 6 && view.gridAnim < 10) { sw = 1.10; sh2 = 0.90; }
+  const w = c - 10, h = c - 10;
+  hero.style.width = w + 'px';
+  hero.style.height = h + 'px';
+  const fa = dx !== 0 ? dx : view.facing; view.facing = fa;
+  hero.style.transform = `translate(${rx + 5}px, ${ry + 5 + h * (1 - sh2)}px) scale(${fa * sw}, ${sh2})`;
+
+  const lean = view.gridAnim < 8 ? 6 : 0;
+  setPart(view.heroParts.char, `rotate(${lean * fa}deg)`);
+  const idle = Math.sin(frame * 0.05) * 0.8;
+  setPart(view.heroParts.head, `translateY(${idle}px)`);
+}
+
+
+function updateHud(f) {
+  // （点击画布 = 运行时生成：物理族点哪生成金币；grid 族点格生成箱子）
+  if (f.mode === 'grid') {
+    hudEl.innerHTML =
+      `state <b class="${f.state === 'won' ? 'win' : ''}">${f.state}</b>` +
+      ` · moves <b>${f.moves}</b> · boxes <b>${f.boxes_on}/${f.boxes_total}</b>` +
+      ` · pos <b>(${f.player.cx},${f.player.cy})</b>`;
+  } else {
+    hudEl.innerHTML =
+      `state <b class="${f.state === 'won' ? 'win' : (f.state === 'dead' ? 'dead' : '')}">${f.state}</b>` +
+      ` · coins <b>${f.coins_taken}/${f.coins_total}</b> · frame <b>${f.frame}</b>` +
+      ` · x <b>${Math.round(f.player.x)}</b> y <b>${Math.round(f.player.y)}</b>`;
+  }
+}
+
+// ---------- 颜色工具 ----------
+const rgb = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+const light = (c, n) => c.map(v => Math.min(255, v + n));
+const dark = (c, n) => c.map(v => Math.max(0, v - n));
+
+// ---------- 程序化音效（WebAudio 方波——与 stub.c 同参数配方） ----------
+let actx = null;
+function sfx(name) {
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    const t = actx.currentTime;
+    const P = {
+      jump: [180, 520, 0.12], coin: [880, 1320, 0.09],
+      win: [523, 784, 0.45], dead: [220, 60, 0.30],
+    }[name];
+    if (!P) return;
+    const [f0, f1, dur] = P;
+    const o = actx.createOscillator(); o.type = 'square';
+    const g = actx.createGain();
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.linearRampToValueAtTime(f1, t + dur);
+    g.gain.setValueAtTime(0.08, t);
+    g.gain.linearRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(actx.destination);
+    o.start(t); o.stop(t + dur);
+  } catch (e) { /* 无音频则静默 */ }
+}
+
+// ---------- 输入 ----------
+const KEYMAP = {
+  ArrowLeft: 'left', ArrowRight: 'right', Space: 'jump', ArrowUp: 'up', ArrowDown: 'down',
+};
+let lastState = 'playing', lastCoins = 0, pendingGrid = null;
+
+window.addEventListener('keydown', e => {
+  if (e.code === 'KeyR') { loadGame(cur); return; }
+  const k = KEYMAP[e.code];
+  if (!k) return;
+  e.preventDefault();
+  if (mode === 'grid') {
+    if (e.repeat) return; // grid 按下沿一次
+    const f = JSON.parse(wasm.web_grid_move(k));
+    drawFrame();
+    if (f.state === 'won' && lastState !== 'won') sfx('win');
+    lastState = f.state;
+  } else {
+    keys[k] = true;
+    if (k === 'jump' && !e.repeat) sfx('jump');
+  }
+});
+window.addEventListener('keyup', e => {
+  const k = KEYMAP[e.code];
+  if (k) keys[k] = false;
+});
+
+// 物理族事件音效钩在主循环里
+setInterval(() => {
+  if (mode !== 'physics' || !wasm) return;
+  const f = JSON.parse(wasm.web_frame());
+  if (f.coins_taken > lastCoins) sfx('coin');
+  lastCoins = f.coins_taken;
+  if (f.state !== lastState) {
+    if (f.state === 'won') sfx('win');
+    if (f.state === 'dead') sfx('dead');
+    lastState = f.state;
+  }
+}, 50);
+
+// ---------- 运行时衍生：点击画布生成内容（v1.2 内核 spawn API）----------
+cv.addEventListener('click', e => {
+  if (!wasm) return;
+  const rect = cv.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (cv.width / rect.width);
+  const y = (e.clientY - rect.top) * (cv.height / rect.height);
+  if (mode === 'grid') {
+    const f = JSON.parse(wasm.web_frame());
+    const cx = Math.floor(x / f.cell), cy = Math.floor(y / f.cell);
+    const r = wasm.web_grid_spawn_box(cx, cy);
+    sfx(r ? 'coin' : 'dead');
+  } else {
+    const id = wasm.web_spawn_coin(x - 10, y - 10, 20);
+    if (id >= 0) sfx('coin');
+  }
+  drawFrame();
+});
+
+// ---------- 按钮 ----------
+document.getElementById('btnReset').onclick = () => loadGame(cur);
+
+// ---- 种子角色图鉴（0-15 缩略图，点击换肤） ----
+const galleryEl = document.getElementById('gallery');
+function refreshGallery(activeSeed) {
+  galleryEl.innerHTML = '';
+  for (let i = 0; i < 16; i++) {
+    const cell = document.createElement('div');
+    cell.title = 'seed ' + i;
+    cell.style.cssText = `width:40px;height:40px;cursor:pointer;border-radius:8px;padding:2px;` +
+      (i === activeSeed ? 'border:1px solid var(--blue);background:#14324d' : 'border:1px solid var(--border);background:var(--panel2)');
+    cell.innerHTML = wasm.web_skin_svg(i);
+    cell.querySelector('svg').style.cssText = 'width:100%;height:100%;overflow:visible';
+    cell.onclick = () => {
+      document.getElementById('seedInput').value = i;
+      buildHeroSVG(i);
+      refreshGallery(i);
+    };
+    galleryEl.appendChild(cell);
+  }
+}
+function currentSeed() {
+  const v = parseInt(document.getElementById('seedInput').value, 10);
+  return Number.isFinite(v) && v >= 0 ? v : 0;
+}
+document.getElementById('btnSkin').onclick = () => {
+  buildHeroSVG(currentSeed());
+  refreshGallery(currentSeed());
+};
+document.getElementById('seedInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { buildHeroSVG(currentSeed()); refreshGallery(currentSeed()); }
+  e.stopPropagation(); // 不触发游戏按键
+});
+document.getElementById('btnVerify').onclick = () => {
+  if (!wasm) return;
+  const rep = JSON.parse(wasm.web_verify());
+  const lines = [
+    `<span class="reward-${rep.reward}">reward = ${rep.reward}</span>   （binary 主分：全部必需探针过才 1，零 LLM）`,
+    `探针 ${rep.passed}/${rep.total} · 契约指纹 ${rep.contract_fingerprint}`,
+    '',
+    ...rep.results.map(r => `${r.pass ? '✅' : '❌'}  ${r.name}  —  ${r.detail}`),
+    '',
+    'evidence_basis:',
+    ...rep.evidence_basis.map(e => '    ' + e),
+    'unsupported_claims（诚实声明没证明什么）:',
+    ...rep.unsupported_claims.map(u => '    ' + u),
+  ];
+  reportEl.innerHTML = lines.join('\n');
+  reportWrap.classList.add('show');
+};
+
+boot().catch(e => {
+  statusEl.textContent = '加载失败：' + e.message + '（需要支持 wasm-gc 的现代浏览器）';
+  statusEl.className = 'err';
+});
+</script>
+</body>
+</html>

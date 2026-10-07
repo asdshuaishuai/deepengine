@@ -1,0 +1,9 @@
+{
+  "probes": [
+    {
+      "name": "win",
+      "script": "right:90",
+      "expect": "state==won"
+    }
+  ]
+}

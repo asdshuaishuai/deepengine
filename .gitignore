@@ -1,0 +1,21 @@
+# 构建产物
+engine/_build/
+*.a
+*.exe
+*.o
+*.dSYM/
+demo/fork_verify
+demo/headless_probe
+demo/scene_demo
+
+# agent 本地状态
+.commandcode/
+.zcode/
+
+
+# 系统与编辑器
+.DS_Store
+*.swp
+
+# 本地烟测临时物
+/tmp/

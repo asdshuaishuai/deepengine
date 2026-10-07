@@ -1,0 +1,19 @@
+import {
+  "deepengine/engine/kernel",
+  "deepengine/engine/scene",
+  "deepengine/engine/bridge",
+  "deepengine/engine/skin",
+  "deepengine/engine/retro",
+  "deepengine/engine/rendercfg",
+  "moonbitlang/core/env",
+  "moonbitlang/core/ref",
+  "moonbitlang/core/math",
+}
+
+options(
+  targets: {
+    // 渲染与 CLI 依赖 bridge（native-only）
+    "render.mbt": [ "native" ],
+    "cli.mbt": [ "native" ],
+  },
+)

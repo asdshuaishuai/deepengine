@@ -1,0 +1,19 @@
+{
+  "probes": [
+    {
+      "name": "hop_p1",
+      "script": "right:44, jump:1, right:44, wait:3",
+      "expect": "coins>=1"
+    },
+    {
+      "name": "floor_is_lava",
+      "script": "right:120",
+      "expect": "state==dead"
+    },
+    {
+      "name": "cross_the_gap",
+      "script": "right:44, jump:1, right:44, right:9, jump:1, right:44, right:17, jump:1, right:57, wait:3",
+      "expect": "state==won"
+    }
+  ]
+}

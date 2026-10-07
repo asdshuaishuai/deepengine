@@ -1,0 +1,6 @@
+{
+  "name": "deepengine/engine",
+  "version": "0.1.0",
+  "description": "deepEngine 内核：确定性玩法内核 + .mbg.md 事实源 + raylib 光栅后端",
+  "readme": "README.md"
+}
