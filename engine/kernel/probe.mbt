@@ -51,37 +51,54 @@ fn parse_script(script : String) -> Array[Cmd] {
 }
 
 ///|
+/// 脚本 → [(语义输入, 帧数)]——**唯一**脚本解析器。
+///
+/// 探针执行（run_script）、轨迹采样（trace）、渲染回放（runtime/cli）三条路径
+/// 共用这一份展开：脚本语法的第二份实现是漂移的温床（DECLARATION.md 禁重复）。
+pub fn script_plan(script : String) -> Array[(Input, Int)] {
+  let out : Array[(Input, Int)] = []
+  for cmd in parse_script(script) {
+    match cmd {
+      Move(dir, n) =>
+        out.push((
+          if dir == "right" {
+            { left: false, right: true, jump: false }
+          } else {
+            { left: true, right: false, jump: false }
+          },
+          n,
+        ))
+      Jump(n) => out.push(({ left: false, right: false, jump: true }, n))
+      Wait(n) => out.push((Input::none(), n))
+    }
+  }
+  out
+}
+
+///|
+/// 语义输入的标签（轨迹用）：跳跃优先于方向——跳是这一帧的注意点
+pub fn input_label(input : Input) -> String {
+  if input.jump {
+    "J"
+  } else if input.right {
+    "R"
+  } else if input.left {
+    "L"
+  } else {
+    "-"
+  }
+}
+
+///|
 /// 在副本上执行脚本，返回终局状态
 pub fn run_script(g0 : Game, script : String) -> Game {
   let g = Game::clone(g0)
-  for cmd in parse_script(script) {
-    match cmd {
-      Move(dir, n) => {
-        let input : Input = if dir == "right" {
-          { left: false, right: true, jump: false }
-        } else {
-          { left: true, right: false, jump: false }
-        }
-        let mut frames = 0
-        while frames < n {
-          step(g, input)
-          frames = frames + 1
-        }
-      }
-      Jump(n) => {
-        let mut frames = 0
-        while frames < n {
-          step(g, { left: false, right: false, jump: true })
-          frames = frames + 1
-        }
-      }
-      Wait(n) => {
-        let mut frames = 0
-        while frames < n {
-          step(g, Input::none())
-          frames = frames + 1
-        }
-      }
+  for cmd in script_plan(script) {
+    let (input, n) = cmd
+    let mut frames = 0
+    while frames < n {
+      step(g, input)
+      frames = frames + 1
     }
   }
   g

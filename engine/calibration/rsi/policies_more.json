@@ -1,0 +1,57 @@
+{
+  "policies": [
+    {
+      "name": "expert_route",
+      "kind": "script",
+      "script": "right:400"
+    },
+    {
+      "name": "explore_a",
+      "kind": "explore",
+      "seed": 7,
+      "frames": 900
+    },
+    {
+      "name": "explore_b",
+      "kind": "explore",
+      "seed": 21,
+      "frames": 900
+    },
+    {
+      "name": "explore_c",
+      "kind": "explore",
+      "seed": 43,
+      "frames": 900
+    },
+    {
+      "name": "explore_d",
+      "kind": "explore",
+      "seed": 99,
+      "frames": 900
+    },
+    {
+      "name": "explore_e",
+      "kind": "explore",
+      "seed": 5,
+      "frames": 900
+    },
+    {
+      "name": "explore_f",
+      "kind": "explore",
+      "seed": 11,
+      "frames": 900
+    },
+    {
+      "name": "explore_g",
+      "kind": "explore",
+      "seed": 17,
+      "frames": 900
+    },
+    {
+      "name": "explore_h",
+      "kind": "explore",
+      "seed": 23,
+      "frames": 900
+    }
+  ]
+}

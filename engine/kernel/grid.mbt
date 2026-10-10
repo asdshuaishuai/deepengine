@@ -169,9 +169,12 @@ pub fn grid_step(g : GridGame, dir : String) -> Unit {
 }
 
 ///|
-/// 脚本执行（与物理族同语法；wait = 原地一回合无操作）
-pub fn grid_run_script(g0 : GridGame, script : String) -> GridGame {
-  let g = GridGame::clone(g0)
+/// 脚本 → [(方向, 回合数)]——**唯一** grid 脚本解析器。
+///
+/// grid_run_script 与轨迹采样共用这一份展开（与物理族 script_plan 同一纪律：
+/// 脚本语法只有一份实现）。未识别指令容错跳过，由解析层 P0 门禁负责报错。
+pub fn grid_plan(script : String) -> Array[(String, Int)] {
+  let out : Array[(String, Int)] = []
   let toks : Array[StringView] = script.split(",").iter().collect()
   for tok in toks {
     let t = tok.trim().to_owned()
@@ -189,15 +192,23 @@ pub fn grid_run_script(g0 : GridGame, script : String) -> GridGame {
       1
     }
     match head {
-      "left" | "right" | "up" | "down" => {
-        let mut i = 0
-        while i < n {
-          grid_step(g, head)
-          i = i + 1
-        }
-      }
-      "wait" => ()
+      "left" | "right" | "up" | "down" => out.push((head, n))
       _ => ()
+    }
+  }
+  out
+}
+
+///|
+/// 脚本执行（与物理族同语法；wait = 原地一回合无操作）
+pub fn grid_run_script(g0 : GridGame, script : String) -> GridGame {
+  let g = GridGame::clone(g0)
+  for cmd in grid_plan(script) {
+    let (dir, n) = cmd
+    let mut i = 0
+    while i < n {
+      grid_step(g, dir)
+      i = i + 1
     }
   }
   g

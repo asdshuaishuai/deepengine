@@ -19,6 +19,7 @@ options(
         "web_grid_move",
         "web_frame",
         "web_verify",
+        "web_trace",
         "web_reset",
         "web_skin_svg",
         "web_spawn_coin",

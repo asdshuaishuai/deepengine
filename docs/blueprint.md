@@ -10,10 +10,25 @@
 >
 > 三者并列进入**装配层**（§2.4），汇入**同一个 GameSpec 与同一个内核**——没有两套世界构建路径。旧 `.mbg.md` 降为 `inline` 入口保留，**双入口等价由 `engine/tests/regression.sh` 机械断言**（逐探针结果比对）：这是"重构而非行为变更"的可核对证据。
 >
+> **v1.4 → v1.5（2026-10-10，本次实施）**：v1.4 把"接受更好的版本"做成**一次性**裁决（`compare`）。
+> 递归自改进（RSIGame）要跑**多轮**，而多轮会立刻涌现两个 v1.4 没防的面，且都以"看起来像进步"的面目出现：
+> - **判据漂移（gate shopping）**：`compare` 的标准取自候选声明的——单轮无妨；多轮就等于让候选**改写评判自己的尺子**（把 `progress >= 100` 改成 `>= 0`），下一轮必然"进步"。这是自改进闭环最经典的 reward hacking。
+> - **探针集膨胀**：覆盖率是"所有策略走到的格子并集"，候选只要多声明几条探索策略就能让它机械上涨，而**关卡一个像素都没改**——比改判据更隐蔽，因为外观恰好是"测得更严谨"。
+>
+> **同一轮顺手把 `compare` 的同一个洞补上了**：v1.4 的 `compare` 也把标准取自候选声明的——这在单轮里就已经是真实漏洞（实测：候选自带一份宽松 `criteria.json`，`compare base c3_selfserving → exit 0 accept_b`，一份**打不通**的关卡被判成"改进"）。现在 `compare` 与 `rsi` **共用同一个裁决单元**（`kernel.judge_versions`）：判据与探针都从基线冻结，候选的声明只作对照；新增退出码 **4 = 检测到操弄判据**（0/2/3 合同不变）。
+>
+> 本轮把自改进的**选择半环**做成一等面（§3.10）：run 开始时**冻结判据门**（取自基线，候选无法影响）与**冻结策略集**（同一套探针测两版）；候选自己声明的门/策略集只作对照，如实标记 `gate_shopping` / `criteria_drift` / `policy_drift`；驱动加**轮预算**（§5.3 的 T=5）与**连续被拒即停**；每轮记 base/cand **体验指纹**形成血统，台账（stdout 单文档）自带冻结门与停止参数，`rsi check` 可按台账**逐轮复算**（改台账 / 改候选内容 / 改基线配置都会红）；被拒轮次按决定项归类成 `rejection_memory`。新增 `kernel/rsi.mbt`、CLI `rsi run` / `rsi check`、自校准 `calibration/rsi/` 四例（真改进 / 退化 / 自私尺子 / 探针膨胀）+ 台账篡改必红，并为 `scene/json.mbt` 补上标准 JSON 的 `\u` 转义（经 Python/`json.dump` 转手的台账必须能读回，否则审计链会断在解析上）。**边界照旧**：候选由 agent 产生，引擎只做选择 + 记账 + 可核验，绝不自己改关卡去"提升"度量（§11）。
+>
+> **v1.3 → v1.4（2026-10-10）**：外部两项递归闭环工作共同指向本引擎完全缺失的一层——**主分之外没有"体验"通道**：
+> - **RGC**（Recursive Game Creator，arXiv 2610.08621）的 Designer→Builder→**Player**→**Reviewer** 体验导向 harness。其 Player 是"通过程序化接口创建并执行**可复用策略**来高效采集**多样轨迹**，以缓解 GUI 慢采集造成的评估偏差"；其 Reviewer 用"**轨迹度量 + 显式文本偏好 + 游戏专属标准**"评测，接受更好的版本并给出下一轮改进意见。
+> - **RSIGame**（递归自改进）：把"接受更好的版本"作为闭环的收敛判据。
+>
+> 本轮把 harness 需要的机械能力做成本引擎原语（§3.9）：**程序化玩家策略**（`script` / `explore(seed,frames)`，同 seed 必同轨迹）→ **逐帧轨迹**（整型化、跨架构确定、终态早停）→ **体验度量**（进展/覆盖/直达/停滞/闲置/多样性；策略集聚合：能力取上限、风险取下限、覆盖取并集）→ **game-specific criteria + 显式偏好序**（文本，不是代码）→ **版本裁决**（`accept_b` / `keep_a` / `inconclusive`）。新增内容源 `policies.json` / `criteria.json`、消费面 `trace` / `compare`（native CLI）与 `web_trace`（wasm 面）、自校准 `calibration/experience/`（拒绝退化 / 接受改进 / **同版不可判为改进**）与 `tests/faces_parity.sh`（CLI 与 wasm 的体验度量逐字段相同）。**主分不变**：体验度量不进 verify 的 binary reward（§3.5 的分离纪律同样适用）。
+>
 > **v1.0 → v1.1**：批准基线并定策两项——① P2 首发骨架定为 `gravity_side` + `grid_logic`；② **程序化优先资产策略**（Minecraft 思想继承）：初期不设真实素材，一切视觉为计算像素、一切音频为合成电子音（§6.0）。
 > **实施进度（2026-09-30）**：**MVP 已达成**——"AI agent 驱动产生小游戏"闭环打通。P0 内核切片（帧步进/语义输入/runtimeState/探针/binary 报告，15/15 单测）+ P1 事实源切片（.mbg.md 解析 + 不崩谓词 P0）+ P2 首族骨架（gravity_side）+ CLI 消费面（run/verify/shot，GPU+软件光栅双二进制）。两个示例游戏 verify 7/7 PASS，其中 coinrush 为 agent 仅写 .mbg.md 创作、首验即过。详见 `engine/README.md` 与主 README。**第二轮（同日）**：P0 退出判据补全（`engine/calibration/` 三件套全绿：oracle 接受 / starter 拒伪 / nop 拒空）；P2 两族达成（grid_logic 第二族：`mode grid` + ASCII `level` 地图 + 推箱语义，`examples/boxpush` 8/8 PASS——两族共享全部管线，仅一个词切换）；P3 起点达成（程序化视觉：金币旋转/玩家眼睛/平台 bevel/尖刺三角/终点飘旗，零图片；chiptune 音效：方波扫频合成四音效，零音频文件）。单测 21/21。下一步：MCP 面（P4）、骨架 errors.md 沉淀、程序化生成器参数化（shape/seed）。
 >
-> **输入**：① 我们自己的可行性验证（raylib fork D1–D3 / MoonBit FFI / headless 确定性渲染）；② deepOrca 游戏开发调研六项目全景（OpenGame / threejs-game-skills / CCGS / VibeGame / GameFactory-3A / Sprite Studio，含 GamePhanes 评测侧与 3D 域姊妹篇）；③ 同门 moonviz / deepOffice 的已验证范式。
+> **输入**：① 我们自己的可行性验证（raylib fork D1–D3 / MoonBit FFI / headless 确定性渲染）；② deepOrca 游戏开发调研六项目全景（OpenGame / threejs-game-skills / CCGS / VibeGame / GameFactory-3A / Sprite Studio，含 GamePhanes 评测侧与 3D 域姊妹篇）；③ 同门 moonviz / deepOffice 的已验证范式；④ **体验导向递归闭环两项外部工作**（RGC arXiv 2610.08621 / RSIGame，用户提供参考——见 §3.9 与附录映射）。
 >
 > 日期：2026-09-30。调研原文：`deepOrca/docs/research/gameStudio/`。遵循调研总口径——**调研仅供参考，引擎以本文的实际设计为准**；本文每一条采纳都注明出处与转化方式。
 
@@ -252,6 +267,118 @@ NOP（什么都不做）           → 必须 0 分
 
 `Artifact（文件/schema 存在）→ Engine（解析/启动）→ Behavior（有序事件/状态转移/边界/生命周期）→ Diagnostics（不变量解释）`。
 **行为分只归 Behavior 层**——场景文件解析成功永远换不来通过。
+
+### 3.9 体验裁决面：策略 → 轨迹 → 度量 → 版本裁决（v1.4 实施）
+
+主分（§3.5）回答"**这个游戏对不对**"（binary、零 LLM）。它不回答"**这个游戏好不好玩**"。
+RGC 与 RSIGame 把后半个问题交给一个递归闭环：Designer → Builder → Player → Reviewer
+→ 接受更好的版本 → 下一轮。引擎不做闭环里属于 LLM 的部分（Designer/Builder 是 agent 的活），
+只把闭环需要、且**必须可校准**的四块能力做成原语——否则每一环都要 agent 自己发明，
+而且发明出来的东西无法自证不是永远绿。
+
+| 环节 | 引擎原语 | 为什么必须在引擎里 |
+|---|---|---|
+| **Player**：可复用策略 / 多样轨迹 | `kernel.Policy`（`script` / `explore(seed,frames)`）+ `run_policy` / `run_policy_grid` → `Trace` | RGC 指出的最大偏差来源是"GUI 慢采集 + 一条手写路径"。策略必须是**确定性数据**（同 seed 必同轨迹、同世界必同度量），校准才有对象 |
+| **轨迹事实** | 逐帧 `Sample`（整型化，跨架构确定）+ 派生量（cells / revisits / stall / path_len / jumps） | 度量若有第二个事实源（截图 / VLM / 墙钟）就不可复现——不再满足 §3.1 |
+| **Reviewer**：轨迹度量 | `metrics_of` → `Metrics`（progress / coverage / directness / stall / idle / diversity / revisit）+ 策略集聚合 `Experience` | 度量只从轨迹来；零 LLM |
+| **game-specific criteria + 显式偏好** | `criteria.json`（标准集 + `prefer` 偏好序）→ `eval_criteria` | RGC 的 "explicit textual preferences" 落成**文本而非代码**：改质量门不用改引擎 |
+| **接受更好的版本** | `adjudicate` → `accept_b` / `keep_a` / `inconclusive` | RSIGame 递归自改进的最小可核对形态 |
+
+**聚合语义（上下限分离）**：能力类（进展 / 覆盖 / 直达 / 多样性）取**最好那条**策略；
+风险类（停滞 / 闲置）取**最差那条**；覆盖度用所有策略的**并集**重算；
+另报 `stuck_ratio`（一个目标都没完成且未通关的策略占比）。
+两类都取单边会说谎：只看最好，"有一条路径会卡死"被吞掉；只看最差，一条笨策略就把可玩上限抹平。
+
+**裁决次序（先硬门后偏好）**：标准通过数 → 终局序（won > playing > dead）→ 偏好序逐项
+→ 全同即 `inconclusive`。终局序是第二道硬门，专门拦住"覆盖度涨了但游戏打不通了"被接受。
+**"改动即进步"不是结论**：同版比较必须返回 inconclusive。
+
+**判据取自基线（v1.5 修正）**：v1.4 曾让 `compare` 优先取**候选**声明的标准（"候选要达到的质量门才是门"）。
+这在单轮里就已经是真实漏洞——候选自带一份宽松 `criteria.json`，就能把打不通的关卡判成 `accept_b`。
+判据是**尺子**，尺子不能由被量的那一方提供。现在 `compare` 与 `rsi`（§3.10）共用 `kernel.judge_versions`：
+判据与偏好序取自**基线**，探针集取基线声明的，候选自己的声明只作对照并如实标记
+（`criteria_drift` / `gate_shopping` / `policy_drift` / `mode_drift`）；`compare` 新增退出码 4 = 检测到操弄判据。
+
+**与主分的关系**：体验度量**不进** verify 的 binary 主分。两套分数各有职责——
+混在一起，两个都不可信（同 §3.5 诊断分纪律）。诊断归属也照 §9.1：度量只描述
+"发生了什么"，不宣称"这更好"——更好由**声明的标准与偏好序**裁决。
+
+**自校准**（§3.7 的门同样适用于新一层）：`calibration/experience/` 的 v1/v2 只差一个
+参数（走道上加满尖刺，关卡数据看起来没变、玩起来全变了），断言
+`trace v1 → 0`、`trace v2 → 2`、`compare v1 v2 → keep_a`、`compare v2 v1 → accept_b`、
+`compare v1 v1 → inconclusive`。裁决器若"永远接受改进"，这条立刻红。
+
+**四面同源**：编排只有一份（`scene/experience.mbt` 的 `run_experience`）——
+native CLI `trace`/`compare` 与 wasm `web_trace` 只是调用方；
+`tests/faces_parity.sh` 机械断言两面的体验度量**逐字段相同**（篡改任一字段即红）。
+
+**已写明的边界**：`explore` 是**分束采样**策略（不是逐帧噪声，噪声轨迹读不出可解释行为）；
+策略帧数上限 `MAX_POLICY_FRAMES=3600`，截断会如实报告（`truncated`）；
+覆盖度分母是"画布 64px 分块数 / 自由格数"，**不是可达格数**（可达性由 progress + 多条策略间接体现）；
+视觉证据仍走 `verify --shot` / `shot` 通道，本层不做像素判断（VLM 判官按 §3.5 属诊断分）。
+
+---
+
+### 3.10 递归自改进面：冻结门 → 多轮 → 台账 → 复算（v1.5 实施）
+
+§3.9 把"接受更好的版本"做成**一次性**裁决（`compare`）。递归自改进要跑**多轮**，
+而多轮会立刻暴露两个 v1.4 没有防的面——它们的共同特征是**看起来像进步**：
+
+| 作弊面 | 形态 | 为什么单轮无妨、多轮致命 |
+|---|---|---|
+| **判据漂移（gate shopping）** | 候选自带一份更松的 `criteria.json`（`progress >= 100` → `>= 0`） | 单轮只是"换个标准看一次"；多轮等于候选**改写评判自己的尺子**，下一轮必然"进步"——自改进闭环最经典的 reward hacking |
+| **探针集膨胀** | 候选自带更多探索策略（覆盖率 = 策略并集，多几条就涨） | 关卡**一个像素都没改**，覆盖率自己就上去了；外观还是"测得更严谨"——比改判据更隐蔽 |
+
+**冻结门**：run 开始时把判据 + 偏好序定成 `Gate`（取自**基线**，候选无法影响），此后每轮都用它判；
+候选自己声明的门只作对照，并如实标记 `criteria_drift`（判据文本与冻结门不同）、
+`gate_shopping`（按它自己的门**更好看**）、`self_passed` vs `frozen_passed`（两把尺子的通过数并排给人看）。
+
+**冻结策略集**：判定时一律用**基线声明的**策略集测所有版本（同一套探针测两版）；
+候选自己声明的策略集只用于标记 `policy_drift`——它意味着"这版独立跑 `trace` 的数字会和台账不一致"，
+不报就是引擎在骗人。
+
+**原型族可比性**：度量**同名不同义**（grid 的 `progress` 是"箱子归位"，physics 是"金币/终点"），
+所以候选与基线的 `mode` 不同时**不予裁决**（`inconclusive` + `deciding=mode` + `mode_drift=true`），
+而不是硬比出一句 `keep_a`——那是可比性谎言。
+
+**预算与停滞**（§5.3 的 T=5 落成机械规则）：轮预算 `--budget`（默认 5）+ 连续被拒 `--stall`（默认 2）即停，
+`stop_reason` ∈ `exhausted` / `budget` / `stalled`。没有它，闭环会把"反复小改"累积成"进步"。
+
+**血统与台账**：每轮记 base/cand 的**体验指纹**（`experience_digest`，只由可复现的聚合事实算出），
+形成 `base → 每轮 → incumbent` 的可核对血统；`rsi_problems` 机械自检血统连通性
+（接受/拒绝必须与裁决一致，序号与 base 链必须接得上）。台账自带**冻结门本体**与**停止参数**，
+`rsi check <ledger.json>` 按台账**复算**：逐轮候选指纹、裁决、冻结门通过数、接受计数、停止原因、
+末端指纹全部重算比对——改台账、改候选内容、改基线配置都会红。
+**不可复算的台账 = 审计链断了**（§9.2 run 不可变）。停止参数也必须进台账，否则复算无法重现同一次停止
+（会给出别的轮数），"可复算"就成了一句空话。
+`rejection_memory` 把被拒轮次按**决定项**归类（如 `criteria × 2`），是 §5.2 errors.md 的机械形态：
+agent 读它就知道这一路已被试过并否决，不必重复同一种无效改动。
+
+| 命令 | 退出码 |
+|---|---|
+| `rsi run <base.guide.md> <cand...> [--budget N] [--stall N]` | 0 = 至少接受一次改进；2 = 一轮都没接受；3 = 检测到操弄判据（优先报）；1 = 装配/参数错 |
+| `rsi check <ledger.json>` | 0 = 逐轮复算一致；2 = 有不一致（逐条列出）；1 = 读不了/不是合法台账 |
+
+**自校准**（`calibration/rsi/`，与 §3.7 同一道门；四个候选共用基线的门与探针集）：
+
+| 候选 | 与基线的差异 | 期望 |
+|---|---|---|
+| `c1_better` | 加两块悬浮平台（覆盖 25→31；标准通过数与终局都不变，由偏好序的 `coverage` 裁定） | **接受**（exit 0） |
+| `c2_worse` | 走道上加尖刺（数据看着只多一个字段，可达性被破坏） | **拒绝**（keep_a，exit 2） |
+| `c3_selfserving` | 与 c2 **同关卡**，自带一把"只有它自己过"的门（`progress <= 50` + `stall_max <= 40`：基线 0/2、它 2/2） | 仍按冻结门**拒绝**（0/3），并标 `gate_shopping`（exit 3） |
+| `c4_morepolicies` | 与基线 **同关卡**，多带 4 条探索策略（独立跑 9 条时覆盖率 26 > 基线 25） | 冻结探针下两者度量逐字段相等 → `inconclusive`，**不接受**（exit 2） |
+
+外加台账复算用例与**篡改台账必红**用例，以及**跨族不可比**用例（physics 基线 vs grid 候选 → `inconclusive`）。裁决器若"每轮都接受改进"，或候选能靠换尺子/带探针过关，这几条立刻红。
+本轮还做了四条**证伪**（每条机制都必须能被推翻）：把判定换成候选自己的门 → `c3`（打不通的关卡）被判 `accept_b`
+并接管 incumbent；把 `gate_shopping` 恒置 false → 报警消失（exit 3 → 2）；把评测换成候选自带的策略集 →
+`c4`（世界未改）被接受且理由写着"coverage: 25 → 26"；删掉血统自检里的 incumbent 校验 →
+"逐轮相连但末端不对"的单测立刻变红。
+
+**已写明的边界**：候选的产生（Designer/Builder）不是引擎的活——本层只做**选择 + 记账 + 可核验**，
+绝不自己改关卡去"提升"度量（§11）；"接受"只意味着**按冻结门与偏好序**更优，不意味着绝对质量更高；
+度量只覆盖声明的策略集，未被任何策略走到的玩法路径不在证据内（台账自带 `unsupported_claims`）；
+被拒候选的**内容**不归档（只记指纹与决定项）——需要留档时由 agent 自己保留文件；
+`rsi` 只在 CLI 面（多文件 + 多轮驱动 + 台账落盘是 shell/CI 的活），wasm 面不导出。
 
 ---
 
@@ -502,9 +629,12 @@ moonviz 已验证的模式（CLI/MCP/WASM/SDK 四面同一内核），deepEngine
 | 面 | 形态 | 用途 |
 |---|---|---|
 | **native** | 可执行（raylib 后端） | 交互游玩、给人看 |
-| **CLI** | stdin ops / 探针命令 | shell 组合、CI |
+| **CLI** | stdin ops / 探针与裁决命令 | shell 组合、CI（`run` / `verify` / `trace` / `compare` / `rsi run` / `rsi check` / `shot` / `inspect`） |
 | **MCP** | 工具面（JSON in/out） | Agent 直驱（对标 moonviz 52 tools） |
-| **内核 wasm** | 仅 L2（纯 MoonBit，无 raylib） | 嵌入宿主（如 deepOrca）做纯逻辑验证 |
+| **内核 wasm** | 仅 L2（纯 MoonBit，无 raylib） | 嵌入宿主（如 deepOrca）做纯逻辑验证与体验度量（`web_trace`） |
+
+**同源不是口号，是可判据**：探针面由 `tests/regression.sh` 断言双入口逐探针一致；
+体验面（§3.9）由 `tests/faces_parity.sh` 断言 CLI 与 wasm 的度量**逐字段相同**。
 
 **deepOrca 接缝预案**（从其 engine-integration-plan 学到的消费方视角，将来若被消费）：
 
@@ -598,6 +728,12 @@ CLI + MCP 工具面 + 内核 wasm 面（带 version_info 与导出契约测试�
 - MCP 面驱动完整"分类 → 骨架 → 修改 → 验证"闭环（一次真实 agent 会话）；
 - wasm 面过导出契约探针（消费方视角，参照 deepOrca vendor 纪律）。
 
+**已达成（v1.4–v1.5）**：CLI 面（`run` / `verify` / `trace` / `compare` / `rsi run` / `rsi check` / `shot` / `inspect`）+
+内核 wasm 面（`version_info()` + 导出面契约烟测 `web/smoke_web.mjs`，含体验度量）；
+体验裁决面（§3.9）在 CLI 与 wasm 两面同源，由 `tests/faces_parity.sh` 机械断言；
+递归自改进面（§3.10）只在 CLI 面（多文件 + 多轮 + 台账落盘），带自校准与台账复算。
+**未达成**：MCP 工具面——"分类 → 骨架 → 修改 → 验证"闭环仍需 MCP 工具封装。
+
 ### P5 — 扩展（按需排期）
 
 - 其余三族骨架（top_down / path_wave / ui_driven）；
@@ -619,6 +755,12 @@ CLI + MCP 工具面 + 内核 wasm 面（带 version_info 与导出契约测试�
 | 专用模型训练 | OpenGame 消融已证框架增益（+9.6）>> 模型增益（+1.1） |
 | vendor 任何调研对象代码 | AGPL 红线（CozyClay）+ 全部价值在机制层不在代码层（两轮调研一致结论） |
 | 向 raylib 上游回馈 issue/PR | 已定政策：AI 驱动开发、未通读上游源码，缺陷内部解决（见 FORK.md） |
+| **用 LLM/VLM 给体验打分（进主分或进裁决）** | 体验裁决面（§3.9）只从**轨迹**出度量，零 LLM：一旦引入主观判官，"这版更好"就无法复现；VLM 若要用于视觉主观项，只能按 §3.5 走**诊断分**，且不进 `reward`、不参与 `adjudicate` |
+| **从截图/像素算体验度量** | 与上同源：像素是渲染层产物（§1 依赖方向），体验是玩法层事实；两者混用会让"内核不碰渲染"的契约失效 |
+| **自动改关卡以"提升"体验度量** | 引擎只出证据与裁决，不自己优化——Designer/Builder 是 agent 的职责；引擎自动调参会让"是谁改的"与"为什么更好"都不可审计（§9.1 归属层纪律） |
+| **把候选自己声明的判据当作判定依据（多轮尤其）** | 与上一条同源：等于让候选**改写评判自己的尺子**（gate shopping），"每轮都进步"必然是幻觉；判定只认 run 开始时冻结的基线之门（§3.10） |
+| **把候选自带的策略集当作比较基准** | 覆盖率是策略并集，多带几条策略就能机械上涨而关卡未改；比较必须用冻结探针集，候选自带的策略集只用来标记 `policy_drift`（§3.10） |
+| **把被拒候选的度量当成"没发生"** | 拒绝必须留下决定项（`rejection_memory`）与指纹；否则下一轮 agent 会重新试同一种无效改动，闭环退化成随机游走（§3.10/§5.2） |
 
 ---
 
@@ -629,6 +771,12 @@ CLI + MCP 工具面 + 内核 wasm 面（带 version_info 与导出契约测试�
 | 浮点跨架构不确定 | 高 | 关键路径定点数/整数化（网格坐标用整数像素——GamePhanes kinetic-vault 同款断言：整型子像素 + 半开边界矩形）；回归用容差 |
 | 骨架库假先验 | 高 | errors.md 只提升真实承重教训；骨架初期从零错误档案开始 |
 | 探针"永远绿" | 高 | 三件套自校准进 CI（starter/oracle/NOP）；探针套件自身也过门 |
+| **体验度量"看起来在涨"** | 高 | 上下限分离聚合（能力上限 / 风险下限 / 覆盖并集）+ 终局序硬门；自校准里**同版必须不可判为改进**（`calibration/experience/`）——否则"每轮都进步"是幻觉 |
+| **体验度量混进主分** | 高 | 结构性禁止：`reward` 只由探针算；体验面单独命令、单独退出码（§3.5/§3.9） |
+| **自改进"每轮都进步"是幻觉** | 高 | 冻结门 + 冻结探针集 + 轮预算/连续被拒即停 + 血统自检；自校准四例（真改进/退化/自私尺子/探针膨胀）任一失效即红（§3.10） |
+| **台账不可复算（审计链断）** | 中 | 台账自带冻结门与停止参数，`rsi check` 逐轮复算并列出差异；`calibration/rsi/` 含篡改台账必红用例；改字段不改指纹也会被抓（§3.10） |
+| **闭环把预算烧在同一个死角** | 中 | 连续被拒达 `--stall` 即停（默认 2）+ `rejection_memory` 告知"这一路试过了"；停止原因进台账（§3.10/§5.3） |
+| **策略集太窄 → 体验结论过宽** | 中 | 报告里逐策略列清并给出 `stuck_ratio`/覆盖并集；"只测了一条路"在报告里无处隐藏（unsupported_claims 同源纪律） |
 | fork 漂移 | 中 | 五条准入标准不变；CI 校验 DEEPENGINE 标记与 FORK.md 一致 |
 | MoonBit 工具链演进 | 中 | 版本门禁（moonviz 同款）；内核代码避免实验特性 |
 | 程序化美术表现力上限 | 中 | Minecraft 先例证明像素+电子音可成风格；Tier 1 迁移通道从 P3 起已验证，瓶颈出现时随时升级，场景/代码零改动 |
@@ -644,8 +792,8 @@ CLI + MCP 工具面 + 内核 wasm 面（带 version_info 与导出契约测试�
 |---|---|---|---|
 | 对象 | UI 原型 | 办公文档 | **可玩游戏** |
 | 时间语义 | 静态画板 + 状态 | 时间轴（动画一等公民） | **帧循环（实时模拟一等公民）** |
-| 验证 | 谓词 + lint | 结构门槛 + 静态化导出 | **行为探针 + binary 主分 + 自校准** |
-| 内容来源 | .mbt.md（唯一事实源） | .mbt.md / DOF（唯一事实源） | **指引 + 多内容源 + 运行时 API**（`game.guide.md` 声明"有什么、怎么解析、怎么渲染组装"，数据住 `level.json` / `probes.json` / spawn API，v1.3） |
+| 验证 | 谓词 + lint | 结构门槛 + 静态化导出 | **行为探针 + binary 主分 + 体验裁决面 + 自改进台账复算 + 自校准** |
+| 内容来源 | .mbt.md（唯一事实源） | .mbt.md / DOF（唯一事实源） | **指引 + 多内容源 + 运行时 API**（`game.guide.md` 声明"有什么、怎么解析、怎么渲染组装"，数据住 `level.json` / `probes.json` / `policies.json` / `criteria.json` / 自改进台账 / spawn API，v1.3–v1.5） |
 | 共同点 | MoonBit 内核 · 不崩谓词 · Agent 工具面 | 同 | 同（**不再共享**"唯一事实源/往返无损"——引擎域解除该约束） |
 
 deepOffice 的 anim 时间轴经验可复用到 L1 动画系统；moonviz 的 layout/谓词/52 工具面经验可复用到 L1 与 MCP 面。**不共享代码，共享架构决策**（领域不同）。
@@ -684,7 +832,16 @@ deepOffice 的 anim 时间轴经验可复用到 L1 动画系统；moonviz 的 la
 | invoked≠loaded | threejs-skills | 报告措辞纪律 | §9.4 |
 | 四面同源（CLI/MCP/WASM/SDK） | moonviz | 消费面设计 | §8 |
 | 消费方视角（锚点/探针/缓存/棘轮） | deepOrca engine-integration-plan | wasm 面预案 | §8 |
+| **coding-native Player：可复用策略 + 程序化接口采集多样轨迹（反 GUI 慢采集偏差）** | **RGC arXiv 2610.08621** | **`Policy`（script/explore）+ `Trace` + 策略集聚合（能力上限/风险下限/覆盖并集）** | §3.9 |
+| 轨迹度量 + 显式文本偏好 + game-specific criteria | RGC | `Metrics` + `criteria.json`（标准集 + `prefer`） | §3.9 |
+| Reviewer 接受更好版本、给出下一轮意见，闭环 | RGC | `adjudicate` → accept_b / keep_a / inconclusive | §3.9 |
+| 递归自改进（版本接受即收敛判据） | RSIGame | 同上 + `calibration/experience/`（同版必须不可判为改进） | §3.9 |
+| **主分之外需要独立的体验通道** | **RGC + RSIGame（用户提供参考）** | **体验度量不进 binary 主分；两套分数各有职责** | §3.5/§3.9 |
+| **多轮自改进的两个作弊面（判据漂移 / 探针膨胀）** | **RGC + RSIGame（本轮自查）** | **冻结门 `Gate` + 冻结策略集 + `gate_shopping`/`criteria_drift`/`policy_drift` 如实标记** | §3.10 |
+| 修复循环预算 T=5 | OpenGame | 自改进轮预算 `--budget`（默认 5）+ 连续被拒 `--stall` 即停 + `stop_reason` | §3.10/§5.3 |
+| errors.md 失败记忆 | OpenGame | `rejection_memory` 按决定项归类被拒轮次 | §3.10/§5.2 |
+| run 不可变 / 引用不引文 | GameFactory/CCGS | 体验指纹血统 + 台账自带冻结门与停止参数 + `rsi check` 复算（篡改即红） | §3.10/§9.2 |
 
 ---
 
-*本文是 deepEngine 的总体规划基线（v1.1：并入"程序化优先"资产策略——Minecraft 思想继承，初期零真实素材，P0–P4 全程计算像素 + 合成电子音）。实施期间的重大决策变更回写本文并记变更日志；可行性验证细节见 [design.md](design.md)；fork 纪律见 [FORK.md](../FORK.md)；治理声明见 [DECLARATION.md](../DECLARATION.md)。*
+*本文是 deepEngine 的总体规划基线（v1.5 起：并入"程序化优先"资产策略——Minecraft 思想继承，初期零真实素材，P0–P4 全程计算像素 + 合成电子音；v1.4 增补 §3.9 体验裁决面、v1.5 增补 §3.10 递归自改进面，输入为 RGC / RSIGame 两项外部参考）。实施期间的重大决策变更回写本文并记变更日志；可行性验证细节见 [design.md](design.md)；fork 纪律见 [FORK.md](../FORK.md)；治理声明见 [DECLARATION.md](../DECLARATION.md)。*

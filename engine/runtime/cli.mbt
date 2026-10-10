@@ -184,7 +184,8 @@ fn cmd_inspect(path : String) -> Unit {
     match r.spec {
       Some(spec) => {
         s = s + ",\"ok\":true,\"title\":\"\{spec.title}\",\"mode\":\"\{spec.mode}\""
-        s = s + ",\"probes\":\{spec.probes.length()},\"solids\":\{spec.solids.length()},\"coins\":\{spec.coins.length()}}"
+        s = s + ",\"probes\":\{spec.probes.length()},\"solids\":\{spec.solids.length()},\"coins\":\{spec.coins.length()}"
+        s = s + ",\"policies_declared\":\{spec.policies.length()},\"criteria_declared\":\{spec.criteria.length()}}"
       }
       None => {
         s = s + ",\"ok\":false}"
@@ -297,6 +298,22 @@ fn cmd_inspect(path : String) -> Unit {
       let total_err = asm.errors.length() + cfg.errors.length()
       let ok = total_err == 0
       s = s + ",\"ok\":\{ok},\"probes\":\{spec.probes.length()},\"solids\":\{spec.solids.length()},\"coins\":\{spec.coins.length()},\"warnings\":\{asm.warnings.length()},\"errors\":\{total_err}"
+      // 体验裁决面自省：agent 必须能看到"trace 会用什么策略去测、按什么标准判"
+      // （声明为空时如实报告将走的缺省策略——否则 inspect 会掩盖实际行为）
+      let eff = @scene.policies_of(spec)
+      s = s + ",\"policies_declared\":\{spec.policies.length()}"
+      s = s + ",\"policies_effective\":" + @scene.policies_json(eff)
+      s = s + ",\"criteria_declared\":\{spec.criteria.length()}"
+      s = s + ",\"prefer\":["
+      let mut pi = 0
+      for k in spec.prefer {
+        if pi > 0 {
+          s = s + ","
+        }
+        s = s + "\"" + k + "\""
+        pi = pi + 1
+      }
+      s = s + "]"
       s = s + "}"
     }
     None => s = s + ",\"ok\":false,\"warnings\":\{asm.warnings.length()},\"errors\":\{asm.errors.length()}}"
@@ -305,11 +322,586 @@ fn cmd_inspect(path : String) -> Unit {
   @bridge.exit(if asm.errors.length() > 0 || cfg.errors.length() > 0 { 1 } else { 0 })
 }
 
+// ---------------- 体验裁决面（blueprint §3.9）----------------
+//
+// 编排（策略集 → 轨迹 → 聚合）在 scene/experience.mbt 只有一份：
+// 本层只做分派、JSON 组装与退出码——native 与 wasm 面共用同一份评估路径。
+
+///|
+/// trace：程序化玩家策略 → 轨迹 → 体验度量 + 标准裁决（零渲染、零 LLM）
+///
+/// exit 0 = 全部标准通过（或未声明标准）；2 = 有标准未过；1 = 装配失败。
+fn cmd_trace(path : String) -> Unit {
+  let spec = match load_spec(path) {
+    Some(s) => s
+    None => {
+      @bridge.exit(1)
+      return
+    }
+  }
+  let policies = @scene.policies_of(spec)
+  let exp = @scene.run_experience(spec)
+  let crs = @kernel.eval_criteria(exp, spec.criteria)
+  let mut failed = 0
+  for r in crs {
+    if !r.pass {
+      failed = failed + 1
+    }
+  }
+  let mut s = "{\"experience\":" + @kernel.experience_json(exp)
+  s = s + ",\"criteria\":" + @kernel.criteria_json(crs)
+  s = s + ",\"policies\":" + @scene.policies_json(policies)
+  s = s + ",\"criteria_failed\":\{failed}}"
+  println(s)
+  @bridge.exit(if failed > 0 {
+    2
+  } else {
+    0
+  })
+}
+
+///|
+/// compare：同一游戏两版（A 基线 / B 候选）裁决——**判据与探针都从 A 冻结**。
+///
+/// exit 0 = accept_b；2 = keep_a；3 = inconclusive；**4 = 检测到操弄判据（gate shopping）**；1 = 装配失败。
+///
+/// v1.4 曾让标准优先取 B 声明的（"候选版本要达到的质量门才是门"）。那在**单轮**里看着无害，
+/// 实际是一个真实漏洞：候选自带一份宽松的 `criteria.json` 就能把打不通的关卡判成 `accept_b`
+/// （实测 `compare base c3_selfserving → exit 0`）。判据是**尺子**，尺子不能由被量的那一方提供。
+/// 现在与 `rsi` 共用同一个裁决单元（`kernel.judge_versions`）：判据取自 A、探针集取 A 声明的，
+/// B 自己的声明只作对照并标记 `criteria_drift` / `gate_shopping` / `policy_drift` / `mode_drift`。
+fn cmd_compare(a_path : String, b_path : String) -> Unit {
+  let spec_a = match load_spec(a_path) {
+    Some(s) => s
+    None => {
+      @bridge.exit(1)
+      return
+    }
+  }
+  let spec_b = match load_spec(b_path) {
+    Some(s) => s
+    None => {
+      @bridge.exit(1)
+      return
+    }
+  }
+  // 冻结：判据 + 偏好序 + 策略集，全部取自基线 A
+  let pol_a = @scene.policies_of(spec_a)
+  let base_key = @scene.policy_set_key(pol_a)
+  let gate = @kernel.gate_of(spec_a.criteria, spec_a.prefer)
+  let exp_a = @scene.run_experience(spec_a)
+  let exp_b = @scene.run_experience_with(spec_b, pol_a)
+  let cand : @kernel.Candidate = {
+    name: b_path,
+    exp: exp_b,
+    criteria: spec_b.criteria,
+    policy_key: @scene.declared_policy_key(spec_b),
+  }
+  let j = @kernel.judge_versions(exp_a, base_key, cand, gate)
+  let d = j.decision
+  let mut s = "{\"decision\":" + @kernel.decision_json(d)
+  s = s + ",\"gate\":" + @kernel.gate_json(gate)
+  s = s + ",\"a\":{\"path\":\"" + a_path + "\",\"experience\":" + @kernel.experience_json(exp_a)
+  s = s + ",\"criteria\":" + @kernel.criteria_json(@kernel.eval_criteria(exp_a, gate.criteria)) + "}"
+  s = s + ",\"b\":{\"path\":\"" + b_path + "\",\"experience\":" + @kernel.experience_json(exp_b)
+  s = s + ",\"criteria\":" + @kernel.criteria_json(@kernel.eval_criteria(exp_b, gate.criteria)) + "}"
+  // policies = 实际使用的**冻结**探针集；policies_declared_b = B 自己声明的（可能不同）
+  s = s + ",\"policies\":" + @scene.policies_json(pol_a)
+  s = s + ",\"policies_declared_b\":" + @scene.policies_json(@scene.policies_of(spec_b))
+  s = s + ",\"frozen_passed\":" + j.frozen_passed.to_string()
+  s = s + ",\"self_passed\":" + j.self_passed.to_string()
+  s = s + ",\"criteria_drift\":" + j.criteria_drift.to_string()
+  s = s + ",\"gate_shopping\":" + j.gate_shopping.to_string()
+  s = s + ",\"policy_drift\":" + j.policy_drift.to_string()
+  s = s + ",\"mode_drift\":" + j.mode_drift.to_string()
+  s = s + ",\"policy_set_mismatch\":" + j.policy_drift.to_string() + "}"
+  println(s)
+  let v = @kernel.verdict_name(d.verdict)
+  // 操弄优先报：靠换尺子"更好看"必须比 accept/keep 更响
+  @bridge.exit(if j.gate_shopping {
+    4
+  } else if v == "accept_b" {
+    0
+  } else if v == "keep_a" {
+    2
+  } else {
+    3
+  })
+}
+
+// ---------------- 递归自改进面（RSI，blueprint §3.10）----------------
+//
+// `compare` 是一次性裁决；递归自改进要跑**多轮**，而多轮会引入两个新问题：
+//   1) 候选可能改写评判自己的判据（gate shopping）→ 判据在 run 开始**冻结**；
+//   2) 无界迭代会把"反复小改"当进步 → 预算 + 连续被拒即停。
+// 台账（stdout 单文档，可重定向存盘）记下血统与停止原因，`rsi check` 可复算。
+
+///|
+/// 台账 JSON 字段读取（缺失一律给安全默认，由调用方校验）
+fn jstr(o : @scene.Json, k : String) -> String? {
+  match @scene.json_get(o, k) {
+    Some(v) => @scene.json_as_str(v)
+    None => None
+  }
+}
+
+///|
+fn jint(o : @scene.Json, k : String) -> Int? {
+  match @scene.json_get(o, k) {
+    Some(v) =>
+      match @scene.json_as_num(v) {
+        Some(n) => Some(n.to_int())
+        None => None
+      }
+    None => None
+  }
+}
+
+///|
+fn jbool(o : @scene.Json, k : String) -> Bool? {
+  match @scene.json_get(o, k) {
+    Some(v) => @scene.json_as_bool(v)
+    None => None
+  }
+}
+
+///|
+fn jobj(o : @scene.Json, k : String) -> @scene.Json? {
+  @scene.json_get(o, k)
+}
+
+///|
+fn jarr(o : @scene.Json, k : String) -> Array[@scene.Json] {
+  match @scene.json_get(o, k) {
+    Some(v) =>
+      match @scene.json_as_arr(v) {
+        Some(a) => a
+        None => []
+      }
+    None => []
+  }
+}
+
+///|
+/// 从台账还原冻结门——**判据取自台账而不是当前文件**。
+///
+/// 若改成"重新读基线声明的标准"，那么"事后把基线标准改松"这件事会被悄悄吞掉：
+/// 复算会用新尺子量旧记录，然后报告"一致"。审计要的恰恰相反。
+fn gate_from_ledger(g : @scene.Json, errs : Array[String]) -> @kernel.Gate {
+  let cs : Array[@kernel.Criterion] = []
+  for item in jarr(g, "criteria") {
+    let name = match jstr(item, "name") {
+      Some(v) => v
+      None => ""
+    }
+    let metric = match jstr(item, "metric") {
+      Some(v) => v
+      None => ""
+    }
+    let op = match jstr(item, "op") {
+      Some(v) => v
+      None => ""
+    }
+    let value = match jint(item, "value") {
+      Some(v) => v
+      None => 0
+    }
+    if name == "" || metric == "" || op == "" {
+      errs.push("台账里有一条标准缺 name/metric/op")
+    }
+    cs.push({ name: name, metric: metric, op: op, value: value })
+  }
+  let prefer : Array[String] = []
+  for item in jarr(g, "prefer") {
+    match @scene.json_as_str(item) {
+      Some(v) => prefer.push(v)
+      None => errs.push("prefer 里有非字符串项")
+    }
+  }
+  @kernel.gate_of(cs, prefer)
+}
+
+///|
+/// rsi run：冻结门多轮驱动（base 为基线，其余为按序候选）
+///
+/// 退出码：0 = 至少有改进被接受；2 = 一轮都没接受；3 = 检测到操弄判据（最严重，优先报）；
+/// 1 = 装配失败或参数错。
+fn cmd_rsi_run(args : Array[String]) -> Unit {
+  let paths : Array[String] = []
+  let mut budget = 5
+  let mut stall = 2
+  let mut i = 3
+  while i < args.length() {
+    let a = args[i]
+    if a == "--budget" || a == "--stall" {
+      let v = if i + 1 < args.length() {
+        match parse_int_arg(args[i + 1]) {
+          Some(x) => x
+          None => 0
+        }
+      } else {
+        0
+      }
+      if a == "--budget" {
+        budget = v
+      } else {
+        stall = v
+      }
+      i = i + 2
+    } else {
+      paths.push(a)
+      i = i + 1
+    }
+  }
+  if paths.length() < 2 || budget < 1 || stall < 1 {
+    println(
+      "{\"error\":\"用法：rsi run <base.guide.md> <cand.guide.md>... [--budget N>=1] [--stall N>=1]\"}",
+    )
+    @bridge.exit(1)
+    return
+  }
+  let base_path = paths[0]
+  let base_spec = match load_spec(base_path) {
+    Some(s) => s
+    None => {
+      @bridge.exit(1)
+      return
+    }
+  }
+  let base_exp = @scene.run_experience(base_spec)
+  let gate = @kernel.gate_of(base_spec.criteria, base_spec.prefer)
+  // 冻结策略集：候选一律用**基线声明的**策略集测（否则"多带几条策略"就能抬高覆盖率）
+  let base_policies = @scene.policies_of(base_spec)
+  let cfg : @kernel.RsiConfig = {
+    gate: gate,
+    policies_digest: @scene.policy_set_key(base_policies),
+    budget: budget,
+    stall_limit: stall,
+  }
+  let cands : Array[@kernel.Candidate] = []
+  let mut j = 1
+  while j < paths.length() {
+    let p = paths[j]
+    let sp = match load_spec(p) {
+      Some(s) => s
+      None => {
+        @bridge.exit(1)
+        return
+      }
+    }
+    cands.push({
+      name: p,
+      exp: @scene.run_experience_with(sp, base_policies),
+      criteria: sp.criteria,
+      policy_key: @scene.declared_policy_key(sp),
+    })
+    j = j + 1
+  }
+  let run = @kernel.run_rsi(base_path, base_exp, cfg, cands)
+  println(@kernel.rsi_json(run))
+  let mut shopping = false
+  for r in run.rounds {
+    if r.gate_shopping {
+      shopping = true
+    }
+  }
+  @bridge.exit(if shopping {
+    3
+  } else if run.accepted > 0 {
+    0
+  } else {
+    2
+  })
+}
+
+///|
+/// rsi check：按台账复算——台账不可复算等于审计链断了（§9.2）。
+///
+/// 退出码：0 = 逐轮复算一致；2 = 有不一致（列出）；1 = 读不了/不是合法台账。
+fn cmd_rsi_check(path : String) -> Unit {
+  if @bridge.mbg_file_exists(path) == 0 {
+    println("{\"ok\":false,\"error\":\"file not found: \{path}\"}")
+    @bridge.exit(1)
+    return
+  }
+  let (doc, perrs) = @scene.parse_text(@bridge.mbg_read_file(path))
+  let root = match doc {
+    Some(j) => j
+    None => {
+      println(
+        "{\"ok\":false,\"error\":\"台账不是合法 JSON\",\"parse_errors\":\{perrs.length()}}",
+      )
+      @bridge.exit(1)
+      return
+    }
+  }
+  let mismatches : Array[String] = []
+  let gate_obj = match jobj(root, "gate") {
+    Some(g) => g
+    None => {
+      println("{\"ok\":false,\"error\":\"台账缺 gate\"}")
+      @bridge.exit(1)
+      return
+    }
+  }
+  let gate_errs : Array[String] = []
+  let gate = gate_from_ledger(gate_obj, gate_errs)
+  for e in gate_errs {
+    mismatches.push(e)
+  }
+  let rec_gate_digest = match jstr(gate_obj, "digest") {
+    Some(v) => v
+    None => ""
+  }
+  if rec_gate_digest != gate.digest {
+    mismatches.push(
+      "台账的判据文本与其自带指纹不符（记录 \{rec_gate_digest}，按文本重算 \{gate.digest}）",
+    )
+  }
+  let base_path = match jobj(root, "base") {
+    Some(b) =>
+      match jstr(b, "path") {
+        Some(v) => v
+        None => ""
+      }
+    None => ""
+  }
+  if base_path == "" {
+    println("{\"ok\":false,\"error\":\"台账缺 base.path\"}")
+    @bridge.exit(1)
+    return
+  }
+  let budget = match jint(root, "budget") {
+    Some(v) => v
+    None => 5
+  }
+  let stall = match jint(root, "stall_limit") {
+    Some(v) => v
+    None => 2
+  }
+  // 逐轮记录的候选路径（台账里的 cand.path 是复算入口）
+  let rec_cand_path : Array[String] = []
+  let rec_cand_digest : Array[String] = []
+  let rec_accepted : Array[Bool] = []
+  let rec_verdict : Array[String] = []
+  let rec_frozen : Array[Int] = []
+  let rec_policy_drift : Array[Bool] = []
+  let rec_mode_drift : Array[Bool] = []
+  for r in jarr(root, "rounds") {
+    let cand = match jobj(r, "cand") {
+      Some(c) => c
+      None => @scene.Json::Null
+    }
+    rec_cand_path.push(
+      match jstr(cand, "path") {
+        Some(v) => v
+        None => ""
+      },
+    )
+    rec_cand_digest.push(
+      match jstr(cand, "digest") {
+        Some(v) => v
+        None => ""
+      },
+    )
+    rec_accepted.push(
+      match jbool(r, "accepted") {
+        Some(v) => v
+        None => false
+      },
+    )
+    rec_frozen.push(
+      match jint(r, "frozen_passed") {
+        Some(v) => v
+        None => -1
+      },
+    )
+    rec_policy_drift.push(
+      match jbool(r, "policy_drift") {
+        Some(v) => v
+        None => false
+      },
+    )
+    rec_mode_drift.push(
+      match jbool(r, "mode_drift") {
+        Some(v) => v
+        None => false
+      },
+    )
+    let dec = match jobj(r, "decision") {
+      Some(d) => d
+      None => @scene.Json::Null
+    }
+    rec_verdict.push(
+      match jstr(dec, "verdict") {
+        Some(v) => v
+        None => ""
+      },
+    )
+  }
+  let rec_accepted_n = match jint(root, "accepted") {
+    Some(v) => v
+    None => -1
+  }
+  let rec_rejected_n = match jint(root, "rejected") {
+    Some(v) => v
+    None => -1
+  }
+  let rec_pol_digest = match jstr(root, "policies_digest") {
+    Some(v) => v
+    None => ""
+  }
+  let rec_stop = match jstr(root, "stop_reason") {
+    Some(v) => v
+    None => ""
+  }
+  let rec_incumbent = match jobj(root, "incumbent") {
+    Some(b) =>
+      match jstr(b, "digest") {
+        Some(v) => v
+        None => ""
+      }
+    None => ""
+  }
+  // 复算
+  let base_spec = match load_spec(base_path) {
+    Some(s) => s
+    None => {
+      @bridge.exit(1)
+      return
+    }
+  }
+  let base_exp = @scene.run_experience(base_spec)
+  let base_policies = @scene.policies_of(base_spec)
+  let live_pol_digest = @scene.policy_set_key(base_policies)
+  let policies_drift = live_pol_digest != rec_pol_digest
+  if policies_drift {
+    mismatches.push("基线当前策略集与台账冻结的策略集不同——台账不再可复算（这是如实报告，不是失败）")
+  }
+  let cfg : @kernel.RsiConfig = {
+    gate: gate,
+    policies_digest: rec_pol_digest,
+    budget: budget,
+    stall_limit: stall,
+  }
+  let cands : Array[@kernel.Candidate] = []
+  for p in rec_cand_path {
+    let sp = match load_spec(p) {
+      Some(s) => s
+      None => {
+        @bridge.exit(1)
+        return
+      }
+    }
+    cands.push({
+      name: p,
+      exp: @scene.run_experience_with(sp, base_policies),
+      criteria: sp.criteria,
+      policy_key: @scene.declared_policy_key(sp),
+    })
+  }
+  let run = @kernel.run_rsi(base_path, base_exp, cfg, cands)
+  for p in @kernel.rsi_problems(run) {
+    mismatches.push("复算出的台账不自洽：" + p)
+  }
+  if run.rounds.length() != rec_cand_digest.length() {
+    mismatches.push(
+      "轮数不一致：台账 \{rec_cand_digest.length()}，复算 \{run.rounds.length()}",
+    )
+  }
+  let mut k = 0
+  for r in run.rounds {
+    if k < rec_cand_digest.length() {
+      if r.cand_digest != rec_cand_digest[k] {
+        mismatches.push("第 \{k} 轮候选指纹不一致——候选内容在记账后被改过")
+      }
+      if r.accepted != rec_accepted[k] {
+        mismatches.push("第 \{k} 轮接受/拒绝与台账不一致")
+      }
+      if @kernel.verdict_name(r.decision.verdict) != rec_verdict[k] {
+        mismatches.push("第 \{k} 轮裁决与台账不一致")
+      }
+      if r.frozen_passed != rec_frozen[k] {
+        mismatches.push("第 \{k} 轮冻结门通过数与台账不一致")
+      }
+      if r.policy_drift != rec_policy_drift[k] {
+        mismatches.push("第 \{k} 轮策略集漂移标记与台账不一致")
+      }
+      if r.mode_drift != rec_mode_drift[k] {
+        mismatches.push("第 \{k} 轮原型族漂移标记与台账不一致")
+      }
+    }
+    k = k + 1
+  }
+  if run.accepted != rec_accepted_n || run.rejected != rec_rejected_n {
+    mismatches.push("接受/拒绝计数与台账不一致")
+  }
+  if @kernel.stop_reason_name(run.stop_reason) != rec_stop {
+    mismatches.push("停止原因与台账不一致")
+  }
+  if run.incumbent_digest != rec_incumbent {
+    mismatches.push("血统末端指纹与台账不一致")
+  }
+  // 基线当前声明的门 vs 台账冻结的门：只报告，不改判（改了才好——如实说出来）
+  let live_gate = @kernel.gate_of(base_spec.criteria, base_spec.prefer)
+  let gate_drift = live_gate.digest != gate.digest
+  if mismatches.length() == 0 {
+    let mut s = "{\"ok\":true,\"rounds\":" + run.rounds.length().to_string()
+    s = s + ",\"accepted\":" + run.accepted.to_string()
+    s = s + ",\"stop_reason\":\"" + @kernel.stop_reason_name(run.stop_reason) + "\""
+    s = s + ",\"incumbent\":\"" + run.incumbent + "\""
+    s = s + ",\"gate_drift\":" + gate_drift.to_string()
+    s = s + ",\"policies_drift\":" + policies_drift.to_string() + "}"
+    println(s)
+    @bridge.exit(0)
+    return
+  }
+  let mut s = "{\"ok\":false,\"mismatches\":["
+  let mut i = 0
+  for m in mismatches {
+    if i > 0 {
+      s = s + ","
+    }
+    s = s + "\"" + m + "\""
+    i = i + 1
+  }
+  s = s + "],\"gate_drift\":" + gate_drift.to_string()
+  s = s + ",\"policies_drift\":" + policies_drift.to_string() + "}"
+  println(s)
+  @bridge.exit(2)
+}
+
+///|
+/// rsi 子命令分派
+fn cmd_rsi(args : Array[String]) -> Unit {
+  if args.length() < 4 {
+    println(
+      "{\"error\":\"用法：rsi run <base.guide.md> <cand.guide.md>... | rsi check <ledger.json>\"}",
+    )
+    @bridge.exit(1)
+    return
+  }
+  let sub = args[2]
+  if sub == "run" {
+    cmd_rsi_run(args)
+  } else if sub == "check" {
+    cmd_rsi_check(args[3])
+  } else {
+    println("{\"error\":\"unknown rsi subcommand: \{sub}\"}")
+    @bridge.exit(1)
+  }
+}
+
 ///|
 pub fn cli(args : Array[String]) -> Unit {
   if args.length() < 3 {
     println("usage: deepengine <run|verify|shot|inspect> <game.guide.md> [--shot p] [--frame N] [--out p]")
+    println("       deepengine trace <game.guide.md>                     # 体验度量（策略→轨迹→度量→标准）")
+    println("       deepengine compare <baseline.guide.md> <candidate.guide.md>  # 版本裁决（0=accept 2=keep 3=不可判 4=操弄判据）")
+    println("       deepengine rsi run <base.guide.md> <cand.guide.md>... [--budget N] [--stall N]  # 递归自改进（冻结门多轮）")
+    println("       deepengine rsi check <ledger.json>                   # 按台账复算（审计链）")
     println("       deepengine retro <hero|palette|chr|ascii|identify|check> [args]")
+    println("       deepengine skin <seed>")
     @bridge.exit(1)
   }
   let cmd = args[1]
@@ -331,9 +923,22 @@ pub fn cli(args : Array[String]) -> Unit {
     cmd_retro(args)
     return
   }
+  // rsi <子命令>：递归自改进的选择半环（blueprint §3.10）
+  if cmd == "rsi" {
+    cmd_rsi(args)
+    return
+  }
   match cmd {
     "run" => cmd_run(path)
     "verify" => cmd_verify(path, arg_after(args, "--shot"))
+    "trace" => cmd_trace(path)
+    "compare" =>
+      if args.length() < 4 {
+        println("{\"error\":\"compare 需要两个入口：compare <baseline.guide.md> <candidate.guide.md>\"}")
+        @bridge.exit(1)
+      } else {
+        cmd_compare(path, args[3])
+      }
     "shot" => cmd_shot(path, arg_after(args, "--frame"), arg_after(args, "--out"))
     "inspect" => cmd_inspect(path)
     _ => {
@@ -745,7 +1350,7 @@ fn replay_and_shoot(spec : @scene.GameSpec, script : String, out : String) -> Un
   @bridge.mbg_set_fps(0) // 验证不限帧——尽快跑完（fork D1 后计时器可用，这里显式关限速）
   if spec.mode == "grid" {
     let gg = spec.build_grid()
-    let cmds = split_script_dirs(script)
+    let cmds = @kernel.grid_plan(script)
     @bridge.mbg_begin_frame()
     draw_grid(gg, spec.g_cell)
     @bridge.mbg_end_frame()
@@ -762,15 +1367,15 @@ fn replay_and_shoot(spec : @scene.GameSpec, script : String, out : String) -> Un
     }
   } else {
     let g = spec.build()
-    let cmds = split_script(script)
+    let cmds = @kernel.script_plan(script)
     @bridge.mbg_begin_frame()
     draw(g)
     @bridge.mbg_end_frame()
     for c in cmds {
-      let (left, right, jump, frames) = c
+      let (input, frames) = c
       let mut f = 0
       while f < frames {
-        @kernel.step(g, { left: left, right: right, jump: jump })
+        @kernel.step(g, input)
         @bridge.mbg_begin_frame()
         draw(g)
         @bridge.mbg_end_frame()
@@ -780,104 +1385,6 @@ fn replay_and_shoot(spec : @scene.GameSpec, script : String, out : String) -> Un
   }
   @bridge.mbg_screenshot(out)
   @bridge.mbg_close()
-}
-
-///|
-/// 脚本 → [(left,right,jump,frames)] 指令流（与 kernel 的私有解析器同语法）
-fn split_script(script : String) -> Array[(Bool, Bool, Bool, Int)] {
-  let out : Array[(Bool, Bool, Bool, Int)] = []
-  let toks : Array[StringView] = script.split(",").iter().collect()
-  for tok in toks {
-    let t = tok.trim().to_owned()
-    if t.length() == 0 {
-      continue
-    }
-    let parts : Array[StringView] = t.split(":").iter().collect()
-    let head = parts[0].trim().to_owned()
-    let n : Int = if parts.length() > 1 {
-      let raw = parts[1].trim().to_owned()
-      let mut v = 0
-      let mut ok = raw.length() > 0
-      for ch in raw {
-        let d = "0123456789".find(ch.to_string())
-        match d {
-          Some(x) => v = v * 10 + x
-          None => {
-            ok = false
-            break
-          }
-        }
-      }
-      if ok {
-        v
-      } else {
-        1
-      }
-    } else {
-      1
-    }
-    match head {
-      "right" => out.push((false, true, false, n))
-      "left" => out.push((true, false, false, n))
-      "jump" => out.push((false, false, true, n))
-      "wait" => out.push((false, false, false, n))
-      _ => ()
-    }
-  }
-  out
-}
-
-///|
-/// grid 脚本 → [(方向, 帧数)]
-fn split_script_dirs(script : String) -> Array[(String, Int)] {
-  let out : Array[(String, Int)] = []
-  let toks : Array[StringView] = script.split(",").iter().collect()
-  for tok in toks {
-    let t = tok.trim().to_owned()
-    if t.length() == 0 {
-      continue
-    }
-    let parts : Array[StringView] = t.split(":").iter().collect()
-    let head = parts[0].trim().to_owned()
-    let n : Int = if parts.length() > 1 {
-      match parse_count(parts[1]) {
-        Some(v) => v
-        None => 1
-      }
-    } else {
-      1
-    }
-    match head {
-      "left" | "right" | "up" | "down" => out.push((head, n))
-      _ => ()
-    }
-  }
-  out
-}
-
-///|
-fn parse_count(v : StringView) -> Int? {
-  let t = v.trim().to_owned()
-  if t.length() == 0 {
-    return None
-  }
-  let mut value = 0
-  let mut ok = true
-  for ch in t {
-    let d = "0123456789".find(ch.to_string())
-    match d {
-      Some(x) => value = value * 10 + x
-      None => {
-        ok = false
-        break
-      }
-    }
-  }
-  if ok {
-    Some(value)
-  } else {
-    None
-  }
 }
 
 ///|

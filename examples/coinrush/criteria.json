@@ -1,0 +1,10 @@
+{
+  "criteria": [
+    { "name": "solvable", "metric": "progress", "op": ">=", "value": 100 },
+    { "name": "survivors", "metric": "outcome_rank", "op": ">=", "value": 1 },
+    { "name": "room_explored", "metric": "coverage", "op": ">=", "value": 20 },
+    { "name": "no_dead_wall", "metric": "stall_max", "op": "<=", "value": 60 },
+    { "name": "not_all_stuck", "metric": "stuck_ratio", "op": "<=", "value": 75 }
+  ],
+  "prefer": ["progress", "coverage", "directness", "stall_max"]
+}

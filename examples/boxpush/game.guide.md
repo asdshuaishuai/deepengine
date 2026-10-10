@@ -24,6 +24,16 @@ source probes
   path "probes.json"
   parser json_probes
 
+# 程序化玩家策略（专家解法 + 三条种子化探索）与游戏专属体验标准。
+# grid 族尤其需要这个区分：随机探索走遍全场却推不动箱（coverage 高、progress 0）
+source policies
+  path "policies.json"
+  parser json_policies
+
+source criteria
+  path "criteria.json"
+  parser json_criteria
+
 # 渲染配置：角色程序化生成，种子取自 level.json 的 player.seed
 render
   hero: procedural seed: player.seed

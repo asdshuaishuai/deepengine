@@ -217,7 +217,39 @@ test "json：非法数字报错" {
 }
 
 ///|
-test "json：\\u 转义明确报错而非静默丢弃" {
-  // 内容源不需要 \u；静默丢弃会让颜色/路径变成乱码而不报错
-  assert_true(jfail("\"\\u0041\"").length() > 0)
+test "json：\\u 基本转义（ASCII）" {
+  // 台账/工具产物常转义非 ASCII（Python json.dump 默认行为）——读不回来审计就断了
+  let v = jparse("\"\\u0041\\u0042\"")
+  assert_true(json_as_str(v) == Some("AB"))
+}
+
+///|
+test "json：\\u 中文转义解出原字符" {
+  let v = jparse("\"\\u4e2d\\u6587\"")
+  assert_true(json_as_str(v) == Some("中文"))
+}
+
+///|
+test "json：\\u 代理对拼成一个码点（emoji）" {
+  let v = jparse("\"\\ud83d\\ude00\"")
+  match json_as_str(v) {
+    Some(s) => {
+      // 一个 emoji = 两个 UTF-16 码元（String 以码元计长）
+      assert_true(s.length() == 2)
+      assert_true(s != "\\ud83d\\ude00")
+    }
+    None => assert_true(false)
+  }
+}
+
+///|
+test "json：\\u 位数不足或非十六进制报错（不静默丢弃）" {
+  assert_true(jfail("\"\\u00\"").length() > 0)
+  assert_true(jfail("\"\\uZZZZ\"").length() > 0)
+}
+
+///|
+test "json：大小写十六进制都接受" {
+  let v = jparse("\"\\u00e9\\u00E9\"")
+  assert_true(json_as_str(v) == Some("éé"))
 }

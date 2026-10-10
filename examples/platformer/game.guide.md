@@ -20,6 +20,16 @@ source probes
   path "probes.json"
   parser json_probes
 
+# 程序化玩家策略（专家路线 + 三条种子化探索）与游戏专属体验标准。
+# 专家路线证明"可通关"，探索策略证明"可达空间"——两者互不替代。
+source policies
+  path "policies.json"
+  parser json_policies
+
+source criteria
+  path "criteria.json"
+  parser json_criteria
+
 # 渲染配置
 render
   hero: procedural seed: player.seed

@@ -382,6 +382,27 @@ pub fn web_verify() -> String {
 }
 
 ///|
+/// 体验裁决面（wasm 面，blueprint §3.9）：策略 → 轨迹 → 体验度量 + 标准裁决。
+///
+/// 与 native CLI 的 `trace` **共用 scene 的编排**（scene.run_experience）——
+/// 四面同源，不存在第二套评估路径。宿主（如 deepOrca）可据此在无 native
+/// 的环境里收集体验证据，而无需自己实现策略执行。
+pub fn web_trace() -> String {
+  match spec_ref.val {
+    Some(spec) => {
+      let policies = @scene.policies_of(spec)
+      let exp = @scene.run_experience(spec)
+      let crs = @kernel.eval_criteria(exp, spec.criteria)
+      let mut s = "{\"experience\":" + @kernel.experience_json(exp)
+      s = s + ",\"criteria\":" + @kernel.criteria_json(crs)
+      s = s + ",\"policies\":" + @scene.policies_json(policies) + "}"
+      s
+    }
+    None => "{\"error\":\"not loaded\"}"
+  }
+}
+
+///|
 fn main {
   // wasm 面：宿主直接调用导出函数，无 CLI 入口（is-main 约束的空 main）
   ignore(0)

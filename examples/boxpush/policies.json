@@ -1,0 +1,12 @@
+{
+  "policies": [
+    {
+      "name": "expert_route",
+      "kind": "script",
+      "script": "up:1, right:7, down:3, left:1, down:2, right:1, up:5, left:1, down:4, right:1, down:1, left:2, up:1, left:1, down:1"
+    },
+    { "name": "explore_a", "kind": "explore", "seed": 7, "frames": 900 },
+    { "name": "explore_b", "kind": "explore", "seed": 21, "frames": 900 },
+    { "name": "explore_c", "kind": "explore", "seed": 43, "frames": 900 }
+  ]
+}

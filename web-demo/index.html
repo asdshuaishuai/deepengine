@@ -99,6 +99,7 @@
     <div class="btns">
       <button class="act" id="btnReset">重开 (R)</button>
       <button class="act primary" id="btnVerify">验证此游戏</button>
+      <button class="act" id="btnTrace">体验度量</button>
       <input id="seedInput" type="number" value="0" min="0" max="999999"
              style="width:76px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;font-size:13px" title="角色种子">
       <button class="act" id="btnSkin">换角色</button>
@@ -306,6 +307,11 @@ function loadGame(g) {
     statusEl.className = 'err';
     return;
   }
+  applyLoad(r, g);
+}
+
+// 装载成功后的统一收尾（inline 入口与指引入口共用）
+function applyLoad(r, g) {
   mode = r.mode;
   statusEl.className = '';
   keysEl.innerHTML = g.keys + ' · <kbd>R</kbd> 重开 · 点击画布生成内容';
@@ -679,6 +685,62 @@ document.getElementById('btnVerify').onclick = () => {
   ];
   reportEl.innerHTML = lines.join('\n');
   reportWrap.classList.add('show');
+};
+
+// ---------- 体验度量（blueprint §3.9）：策略 → 轨迹 → 度量 → 标准 ----------
+// 与桌面 CLI 的 `trace` **共用 scene 的同一份编排**（scene.run_experience），
+// 因此浏览器里给出的数字与 `apphead.exe trace` 逐字段相同。
+const GUIDES = {
+  platformer: { guide: '../examples/platformer/game.guide.md', sources: ['level.json', 'probes.json', 'policies.json', 'criteria.json'] },
+  coinrush:   { guide: '../examples/coinrush/game.guide.md',   sources: ['level.json', 'probes.json'] },
+  boxpush:    { guide: '../examples/boxpush/game.guide.md',    sources: ['level.json', 'probes.json', 'policies.json', 'criteria.json'] },
+};
+
+document.getElementById('btnTrace').onclick = async () => {
+  if (!wasm) return;
+  reportEl.textContent = '测量中…（跑完整个策略集，纯内核、不渲染）';
+  reportWrap.classList.add('show');
+  let entry = 'inline（该入口未声明策略集 → 用缺省探索策略）';
+  const G = GUIDES[cur.id];
+  if (G) {
+    try {
+      const base = '../examples/' + cur.id + '/';
+      for (const s of G.sources) {
+        wasm.web_put_source(s, await (await fetch(base + s)).text());
+      }
+      const lr = JSON.parse(wasm.web_load_guide(await (await fetch(G.guide)).text()));
+      if (lr.ok) { applyLoad(lr, cur); entry = 'guide（' + G.sources.length + ' 个内容源）'; }
+    } catch (e) {
+      // 指引路径不可用不影响测量：回落到当前已载入的 inline 世界
+    }
+  }
+  const tr = JSON.parse(wasm.web_trace());
+  if (tr.error) { reportEl.textContent = '测量失败：' + tr.error; return; }
+  const e = tr.experience, m = e.metrics;
+  const passed = tr.criteria.filter(c => c.pass).length;
+  const lines = [
+    `入口：${entry}`,
+    `策略集（${tr.policies.length}）：`,
+    ...tr.policies.map(p => '    ' + p.spec),
+    '',
+    `聚合：终局 ${m.outcome}（序 ${m.outcome_rank}） · 进展 ${m.progress}% · 覆盖 ${m.coverage}% · 直达 ${m.directness}%`,
+    `      停滞最长 ${m.stall_max} 帧（占比 ${m.stall_ratio}%） · 闲置 ${m.idle_ratio}% · 动作种类 ${m.diversity} · 路径 ${m.path_len}px`,
+    `      覆盖并集 ${e.cells_union}/${e.arena_cells} 格 · 毫无进展的策略 ${e.stuck_policies}/${e.n_policies}（${e.stuck_ratio}%）`,
+    '',
+    '逐策略（每一条都是同一世界上的独立副本）：',
+    ...e.per_policy.map(p =>
+      `    ${p.name.padEnd(14)} 终局=${p.metrics.outcome.padEnd(7)} 进展=${String(p.metrics.progress).padStart(3)}%` +
+      ` 覆盖=${String(p.metrics.coverage).padStart(3)}% 停滞=${String(p.metrics.stall_max).padStart(3)} 直达=${String(p.metrics.directness).padStart(3)}%`),
+    '',
+    tr.criteria.length
+      ? `游戏专属标准（${passed}/${tr.criteria.length}）：`
+      : '游戏专属标准：未声明（只看度量，不做裁决）',
+    ...tr.criteria.map(c => `    ${c.pass ? '✅' : '❌'} ${c.name} — ${c.detail}`),
+    '',
+    '度量只从轨迹来：同策略同世界必同度量（零 LLM、零截图、零墙钟）。',
+    '主分仍是「验证此游戏」的 binary reward——体验度量是诊断与版本裁决输入，两者不混。',
+  ];
+  reportEl.textContent = lines.join('\n');
 };
 
 boot().catch(e => {

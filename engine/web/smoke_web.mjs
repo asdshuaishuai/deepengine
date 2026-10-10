@@ -89,4 +89,32 @@ let bf = JSON.parse(w.web_frame());
 console.log('[15] 衍生后 boxes =', bf.boxes_total, '(应为 3)');
 if (br !== 1 || bf.boxes_total !== 3) { console.log('FAIL'); process.exit(1); }
 
-console.log('\n✅ wasm 面烟测全部通过（physics/grid/verify/reset/determinism/spawn）');
+// ---- [16]-[18] 体验裁决面（wasm 面，blueprint §3.9）----
+// 指引入口：wasm 无文件 IO，先 web_put_source 注册四个内容源，再 load_guide。
+for (const [path, rel] of [
+  ['level.json', '../../examples/platformer/level.json'],
+  ['probes.json', '../../examples/platformer/probes.json'],
+  ['policies.json', '../../examples/platformer/policies.json'],
+  ['criteria.json', '../../examples/platformer/criteria.json'],
+]) {
+  w.web_put_source(path, await readFile(new URL(rel, import.meta.url), 'utf8'));
+}
+const guide = await readFile(new URL('../../examples/platformer/game.guide.md', import.meta.url), 'utf8');
+r = JSON.parse(w.web_load_guide(guide));
+console.log('[16] load_guide platformer:', JSON.stringify(r));
+if (!r.ok) { console.log('FAIL: 指引装配失败'); process.exit(1); }
+
+const tr = JSON.parse(w.web_trace());
+const tm = tr.experience.metrics;
+console.log('[17] web_trace: 策略数 =', tr.policies.length, '| progress =', tm.progress, '| coverage =', tm.coverage, '| outcome =', tm.outcome, '| 标准 =', tr.criteria.filter((c) => c.pass).length + '/' + tr.criteria.length);
+if (tr.policies.length !== 4) { console.log('FAIL: 策略集未随指引载入'); process.exit(1); }
+if (tm.progress !== 100) { console.log('FAIL: 专家路线应给出 progress=100'); process.exit(1); }
+if (tr.criteria.some((c) => !c.pass)) { console.log('FAIL: 标准应全过'); process.exit(1); }
+// 证据可复现：报告里带了策略声明本身
+if (!/seed=7/.test(JSON.stringify(tr.policies))) { console.log('FAIL: 应报告策略声明'); process.exit(1); }
+// 度量只来自轨迹：重跑一次必须逐字段相同（wasm 面无墙钟路径）
+const tr2 = JSON.parse(w.web_trace());
+console.log('[18] web_trace 双跑一致:', JSON.stringify(tr.experience) === JSON.stringify(tr2.experience) ? 'YES' : 'NO');
+if (JSON.stringify(tr.experience) !== JSON.stringify(tr2.experience)) process.exit(1);
+
+console.log('\n✅ wasm 面烟测全部通过（physics/grid/verify/reset/determinism/spawn/experience）');

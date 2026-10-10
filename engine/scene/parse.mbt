@@ -21,6 +21,10 @@ pub(all) struct GameSpec {
   spikes : Array[@kernel.Rect]
   mut goal : @kernel.Rect?
   probes : Array[@kernel.Probe]
+  // 体验裁决面（blueprint §3.9）——策略集 / 游戏专属标准 / 显式偏好序
+  policies : Array[@kernel.Policy]
+  criteria : Array[@kernel.Criterion]
+  prefer : Array[String]
   // grid_logic 族（mode == "grid"）
   mut mode : String // "physics" | "grid"
   mut g_cols : Int
@@ -58,6 +62,9 @@ pub fn default_spec() -> GameSpec {
     spikes: [],
     goal: None,
     probes: [],
+    policies: [],
+    criteria: [],
+    prefer: [],
     mode: "physics",
     g_cols: 10,
     g_rows: 8,
@@ -122,6 +129,39 @@ pub fn GameSpec::build_grid(self : GameSpec) -> @kernel.GridGame {
     goals.push(g)
   }
   @kernel.GridGame::new(self.g_cols, self.g_rows, self.player_seed, self.g_px, self.g_py, walls, boxes, goals)
+}
+
+// ---------------- 世界信息（体验度量的分母）----------------
+
+///|
+/// 世界信息：体验度量的分母。
+///
+/// 为什么放在 scene 而不是 kernel：内核只接收数字（零场景依赖），
+/// "画布分几块、有几枚金币"是场景知识——依赖方向不反（blueprint §1）。
+pub(all) struct WorldInfo {
+  targets : Int // 目标总数（physics=金币数 / grid=箱子数）
+  arena_cells : Int // 覆盖度分母（physics=画布 64px 分块数 / grid=自由格数）
+}
+
+///|
+fn block_count(v : Int) -> Int {
+  if v <= 0 {
+    1
+  } else {
+    (v + 63) / 64
+  }
+}
+
+///|
+pub fn GameSpec::world_info(self : GameSpec) -> WorldInfo {
+  if self.mode == "grid" {
+    let total = self.g_cols * self.g_rows
+    let free = total - self.g_walls.length()
+    { targets: self.g_boxes.length(), arena_cells: if free > 0 { free } else { 1 } }
+  } else {
+    let cells = block_count(self.w) * block_count(self.h)
+    { targets: self.coins.length(), arena_cells: cells }
+  }
 }
 
 // ---------------- 基础工具 ----------------

@@ -1,0 +1,8 @@
+{
+  "criteria": [
+    { "name": "solvable", "metric": "progress", "op": ">=", "value": 100 },
+    { "name": "survivors", "metric": "outcome_rank", "op": ">=", "value": 1 },
+    { "name": "room_explored", "metric": "coverage", "op": ">=", "value": 20 }
+  ],
+  "prefer": ["progress", "coverage", "directness", "stall_max"]
+}

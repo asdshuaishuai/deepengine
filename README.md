@@ -52,16 +52,23 @@ git diff master deepengine --stat    # 改动范围
 | **render 契约兑现（v1.3 补）** | ✅ 指引 `render` 块的参数真正驱动渲染层：`bevel` / `edge` / `spin` / `teeth` / `flag` / `grip` / `rig` / `dust` + HUD 字段由 `assembly` 声明。五项参数经**像素级验证**（改参数 → PNG 差异）；inspect 输出"声明 → 生效值" |
 | **FC/SFC 资源制作与识别面（本次）** | ✅ `engine/retro/`：**硬件约束写成可执行数据**（精灵 3 色 / 扫描线 8 / 图块占用 / 色强调位，均据 nesdev+wiki.superfamicom 核实）+ FC 64 色调色板 + **受约束的程序化人物生成器**（6 姿态 × 6 具名 preset，帽子/脸/胡子/躯干/双腿/鞋，每精灵恒 ≤3 色）+ **CHR 2bpp planar 编解码**（严格互逆，按图块序列组织，可直接喂 ROM 流程）+ **识别闭环**（生成→CHR→读回→普查→预算裁决）+ SVG/ASCII/hexdump 工件 |
 | **SFC 去退化（本次修复）** | ✅ 人物造型改为**宽度参数化**（`BodyBox`）：此前下半身坐标写死 8 宽假设，SFC 的 16×16 帧里人物只占左侧 8px、右半全空——SFC 支持名义存在实为退化分支。现同一套逻辑服务 FC 8×16 与 SFC 16×16，并有 6 条 SFC 专属回归测试（占满宽度 / 触达右半 / 躯干宽度 / 跨平台镜像不变量）。未实现项在 `engine/README.md` 写明边界（背景 metatile、4bpp/8bpp、Mode 7） |
+| **v1.4 体验裁决面** | ✅ 主分之外补上**"好不好玩"通道**（参考 RGC arXiv 2610.08621 与 RSIGame 的递归闭环）：`kernel/trace.mbt` 程序化玩家策略（`script` / `explore(seed,frames)`）→ 逐帧轨迹 → `kernel/metrics.mbt` 体验度量（进展/覆盖/直达/停滞/闲置/多样性）→ 策略集聚合（**能力取上限、风险取下限、覆盖取并集**）→ `criteria.json` 游戏专属标准 + 显式偏好序 → `adjudicate` 版本裁决（accept_b / keep_a / **inconclusive**）。消费面 `trace` / `compare`（CLI）与 `web_trace`（wasm）同源；自校准 `calibration/experience/`（拒绝退化 / 接受改进 / **同版不可判为改进**）。**主分不变**：体验度量不进 binary reward。测试 172 → **217** |
+| **v1.5 递归自改进面（本次）** | ✅ 把"接受更好版本"从**一次性比较**推进到**多轮递归**（RSIGame 形态），并堵住多轮才出现的两个作弊面：**判据漂移**（候选自带更松的 `criteria.json` → 等于改写评判自己的尺子）与**探针集膨胀**（多带几条探索策略就能让覆盖率"测"上去，关卡一个像素没改）。引擎在 run 开始时**冻结判据门与策略集**（都取自基线），候选声明的门/策略集只作对照并如实标记 `gate_shopping` / `criteria_drift` / `policy_drift`；驱动加**轮预算**（§5.3 T=5）+ **连续被拒即停**；每轮记体验**指纹**形成血统，台账自带冻结门与停止参数，`rsi check` 可按台账**逐轮复算**（改台账 / 改候选内容 / 改基线配置都会红）；被拒轮次归成 `rejection_memory`（失败记忆）。**同一轮补上了 `compare` 的同款漏洞**：v1.4 的 `compare` 也把判据取自候选声明——实测候选自带宽松 `criteria.json` 时，一份**打不通**的关卡被判 `accept_b`（exit 0）；现与 `rsi` 共用同一裁决单元，判据与探针都从基线冻结，新增退出码 **4 = 操弄判据**。自校准 `calibration/rsi/` 四例（真改进 / 退化 / 自私尺子 / 探针膨胀）+ 台账篡改必红 + `compare` 三条（拦操弄 / 探针膨胀 / 跨族不可比）。测试 217 → **240** |
 | **P0–P4 完整版（MCP 面 / 骨架库全族 / 背景图块生成器）** | 🔜 |
 
 **MVP 证据**（全部可复现）：
 
-- `engine/`——六包实现：kernel（**两族**：gravity_side + grid_logic）/ scene（指引解析 + JSON 内容源 + 装配层 + inline 兼容）/ rendercfg（渲染配置契约）/ **retro（FC/SFC 资源制作与识别）** / bridge + runtime + 双二进制（GPU 交互 / 软件光栅 headless）；**172/172 单测**；
+- `engine/`——六包实现：kernel（**两族**：gravity_side + grid_logic；含 `trace`/`metrics`/`rsi` 体验与自改进原语）/ scene（指引解析 + JSON 内容源 + 装配层 + inline 兼容 + 体验编排）/ rendercfg（渲染配置契约）/ **retro（FC/SFC 资源制作与识别）** / bridge + runtime + 双二进制（GPU 交互 / 软件光栅 headless）；**240/240 单测**；
 - `engine/retro/`——`retro check fc|sfc` 资源契约门禁 + `retro identify` 识别闭环（CHR 往返逐像素一致、用色在预算内）+ `retro hero` SVG 工件（`shots/retro/*.svg`）；
-- `engine/calibration/`——**验证器自校准**：oracle 真 work 被接受 / starter 伪声明被拒 / nop 空输入被拒 / 缺源必拒——**两条入口各自校准**，验证器不是永远绿；
+- `engine/calibration/`——**验证器自校准**：oracle 真 work 被接受 / starter 伪声明被拒 / nop 空输入被拒 / 缺源必拒——**两条入口各自校准**，验证器不是永远绿；`experience/` 校准**裁决器**（拒绝退化 / 接受改进 / 同版不可判为改进）；
 - `engine/tests/regression.sh`——**双入口等价比对**：指引入口与 inline 入口在三个示例上产出逐探针一致的结果；
-- `examples/platformer/`、`examples/coinrush/`、`examples/boxpush/`——三个游戏全 PASS（7/7、7/7、8/8），每个含 `game.guide.md` + `level.json` + `probes.json`；
-- 验证器非"永远绿"：坏游戏负样本正确拒绝（reward=0）；跨运行报告逐字节一致。
+- `engine/tests/faces_parity.sh`——**四面同源核对**：CLI `trace` 与 wasm `web_trace` 的体验度量**逐字段相同**（篡改任一字段即红）；
+- `engine/calibration/rsi/`——**自改进自校准**：真改进被接受（覆盖 25→31，标准与终局不变，由偏好序裁定）/ 退化被拒 / **与退化版同关卡但自带"只有它自己过"的门 → 仍被拒并标记操弄** / **与基线同关卡但多带 4 条策略 → 冻结探针下逐字段相等即不可判**；外加台账复算与**篡改台账必红**；
+- **自改进的证伪实验**（每条机制都能被推翻）：把判定换成候选自己的门 → 打不通的关卡被判 `accept_b` 并接管基线；把 `gate_shopping` 恒置 false → 报警消失；把评测换成候选自带的策略集 → 同关卡版本被接受（理由写着 `coverage: 25 → 26`）；删掉血统自检的末端校验 → 对应用例立刻变红；
+- `examples/platformer/`、`examples/coinrush/`、`examples/boxpush/`——三个游戏全 PASS（7/7、7/7、8/8），每个含 `game.guide.md` + `level.json` + `probes.json` + `policies.json` + `criteria.json`；
+- 验证器非"永远绿"：坏游戏负样本正确拒绝（reward=0）；跨运行报告逐字节一致；
+- 体验面实测（platformer，4 条策略）：专家路线 `won/进展 100%` 证明**可通关**，探索策略 `progress 33%/0%/0%` 证明**可达空间与滞留风险**，聚合覆盖率 25%（并集 34/135 格）、`stuck_ratio` 2/4——两类证据互不替代；
+- 对照案例（coinrush，同为 4 条策略）：专家路线 `won/100%`，但三条探索**全部死亡或零进展**（`stuck_ratio` 3/4，`floor_is_lava` 探针证实盲走必死）——同一个引擎把"可通关但只认精确路线"与"可通关且多条路都行"区分开了，这是主分给不出的信息。
 
 两项已定策：① P2 首发骨架 `gravity_side` + `grid_logic`；② **程序化优先**（Minecraft 思想继承）——MVP 全部视觉为计算像素（色块/圆），资产即参数。
 
@@ -75,7 +82,11 @@ git diff master deepengine --stat    # 改动范围
 
 **规划输入**：deepOrca 游戏开发调研六项目全景（OpenGame 消融定量 / VibeGame 约束设计 /
 GamePhanes 评测校准 / GameFactory Mechanic 契约 / Sprite Studio 确定性资产 / CCGS 治理），
-逐条转化为引擎机制，映射表见 [blueprint 附录](docs/blueprint.md)。
+逐条转化为引擎机制，映射表见 [blueprint 附录](docs/blueprint.md)；
+另据 **RGC**（Recursive Game Creator，arXiv 2610.08621，Designer→Builder→Player→Reviewer
+体验导向 harness：可复用策略采集多样轨迹、轨迹度量 + 显式文本偏好 + 游戏专属标准、
+Reviewer 接受更好版本）与 **RSIGame**（递归自改进）补上 §3.9 体验裁决面；
+本轮继续用它们补上 §3.10 递归自改进面（冻结门 / 冻结探针集 / 预算与停滞 / 血统台账 + 复算）。
 
 ## 目录
 
@@ -88,11 +99,13 @@ deepEngine/
 │   ├── blueprint.md        引擎层总体规划 ★★★（实施基线）
 │   └── design.md           可行性验证记录与设计探索
 ├── engine/                 ★★ MVP 实现（kernel/scene/bridge/runtime/双二进制/web wasm 面）
+│   ├── calibration/rsi/    自改进自校准夹具（真改进/退化/自私尺子/探针膨胀）
 │   └── README.md           用法与 .mbg.md 语法
-├── web-demo/               浏览器演示（三游戏可玩可验证，wasm 内核）
+├── web-demo/               浏览器演示（三游戏可玩 + 可验证 + 可看体验度量，wasm 内核）
 ├── examples/
-│   ├── platformer/         第一个游戏（verify 7/7 PASS）
-│   └── coinrush/           agent 仅写 .mbg.md 创作的游戏（首验即 PASS）
+│   ├── platformer/         第一个游戏（verify 7/7 PASS；含 policies/criteria.json）
+│   ├── coinrush/           agent 仅写 .mbg.md 创作的游戏（首验即 PASS）
+│   └── boxpush/            grid_logic 族（verify 8/8 PASS；含 policies/criteria.json）
 ├── demo/                   验证脚本
 │   ├── fork_verify.c       fork 三项修复的验证 ★
 │   ├── scene.mbg.md        声明式场景格式雏形

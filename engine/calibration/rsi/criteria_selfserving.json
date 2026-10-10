@@ -1,0 +1,7 @@
+{
+  "criteria": [
+    { "name": "solvable", "metric": "progress", "op": "<=", "value": 50 },
+    { "name": "not_too_stuck", "metric": "stall_max", "op": "<=", "value": 40 }
+  ],
+  "prefer": ["progress", "coverage", "directness", "stall_max"]
+}

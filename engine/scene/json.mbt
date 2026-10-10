@@ -37,6 +37,47 @@ fn skip_ws(s : String, i : Int) -> Int {
 }
 
 ///|
+/// 单个十六进制字符 → 值（大小写皆可）
+fn hex_val(c : String) -> Int? {
+  match "0123456789abcdef".find(c) {
+    Some(v) => Some(v)
+    None =>
+      match "0123456789ABCDEF".find(c) {
+        Some(v) => Some(v)
+        None => None
+      }
+  }
+}
+
+///|
+/// `\uXXXX` → 一个 UTF-16 码元；`\uD83D\uDE00` 这种代理对由相邻两次转义自然拼成。
+///
+/// 为什么必须支持：台账/工具产物常由别的程序写出（Python `json.dump` 默认转义非 ASCII），
+/// 只收原字符会让"经标准工具转手过的 JSON"读不回来——审计链就此断在解析上。
+fn read_u_escape(s : String, i : Int, errors : Array[String]) -> (String, Int) {
+  if i + 4 > s.length() {
+    errors.push("json: \\u 转义不足 4 位")
+    return ("", s.length())
+  }
+  let hex = s.substring(start=i, end=i + 4)
+  let mut v = 0
+  let mut k = 0
+  let mut ok = true
+  while k < 4 {
+    match hex_val(hex.substring(start=k, end=k + 1)) {
+      Some(d) => v = v * 16 + d
+      None => ok = false
+    }
+    k = k + 1
+  }
+  if !ok {
+    errors.push("json: \\u 转义含非十六进制字符")
+    return ("", i + 4)
+  }
+  (v.unsafe_to_char().to_string(), i + 4)
+}
+
+///|
 fn parse_string_lit(s : String, i : Int, errors : Array[String]) -> (String, Int) {
   // s[i] == '"'，返回 (内容, 闭合引号后的下标)
   let mut i = i + 1
@@ -44,7 +85,7 @@ fn parse_string_lit(s : String, i : Int, errors : Array[String]) -> (String, Int
   while i < s.length() {
     let c = s.substring(start=i, end=i + 1)
     if c == "\\" {
-      // 转义：只支持 \" \\ \/ \n \r \t \b \f（内容源不需要 \u）
+      // 转义：\" \\ \/ \n \r \t \b \f 与 \uXXXX
       if i + 1 >= s.length() {
         errors.push("json: 字符串在转义处截断")
         return (out, s.length())
@@ -58,8 +99,9 @@ fn parse_string_lit(s : String, i : Int, errors : Array[String]) -> (String, Int
         "b" => out = out + "\u{8}"
         "f" => out = out + "\u{c}"
         "u" => {
-          errors.push("json: 不支持 \\u 转义（内容源请用原字符）")
-          ()
+          let (ch, ni) = read_u_escape(s, i, errors)
+          out = out + ch
+          i = ni
         }
         _ => out = out + e // \" \\ \/ 及其他
       }

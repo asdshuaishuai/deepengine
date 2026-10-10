@@ -18,6 +18,8 @@
 pub(all) enum Payload {
   Level(GameSpec) // 关卡几何（部分字段可被后续源覆盖）
   Probes(Array[@kernel.Probe])
+  Policies(Array[@kernel.Policy]) // 程序化玩家策略集（体验裁决面，§3.9）
+  Criteria(Array[@kernel.Criterion], Array[String]) // 游戏专属标准 + 显式偏好序
   Empty
   Runtime(String) // 仅记录名字：内容由运行时 spawn API 生成
 }
@@ -439,12 +441,204 @@ pub fn decode_probes(text : String) -> (Array[@kernel.Probe], Array[String], Arr
   (probes, errors, warnings)
 }
 
+// ---------------- policies.json 解码（体验裁决面）----------------
+
+///|
+/// 字符串字段取值；缺失/类型错时返回 fallback 并记错
+fn str_field(
+  obj : Json,
+  key : String,
+  fallback : String,
+  errors : Array[String],
+  where_ : String
+) -> String {
+  match json_get(obj, key) {
+    None => fallback
+    Some(v) =>
+      match json_as_str(v) {
+        Some(s) => s
+        None => {
+          errors.push("\{where_}.\{key} 需为字符串")
+          fallback
+        }
+      }
+  }
+}
+
+///|
+/// policies.json → Array[Policy]
+///
+/// kind 闭集：`script`（手写路线）/ `explore`（种子化探索）。
+/// 未注册的 kind **报错**，不静默跳过——静默跳过会让"策略集"看起来
+/// 覆盖了实际上是空集，这是评估偏差最容易进来的地方。
+pub fn decode_policies(text : String) -> (Array[@kernel.Policy], Array[String], Array[String]) {
+  let errors : Array[String] = []
+  let warnings : Array[String] = []
+  let out : Array[@kernel.Policy] = []
+  let (parsed, jerrs) = parse_text(text)
+  for e in jerrs {
+    errors.push(e)
+  }
+  match parsed {
+    None => ()
+    Some(root) =>
+      match json_get(root, "policies") {
+        Some(pv) =>
+          match json_as_arr(pv) {
+            Some(items) => {
+              let mut idx = 0
+              for it in items {
+                let where_ = "policies.json: policies[\{idx}]"
+                let name = str_field(it, "name", "policy\{idx}", errors, where_)
+                let kind = str_field(it, "kind", "", errors, where_)
+                if kind == "script" {
+                  let script = str_field(it, "script", "", errors, where_)
+                  if script.length() == 0 {
+                    errors.push("\{where_} 缺 script（kind=script 必须给路线）")
+                  } else {
+                    out.push(@kernel.policy_script(name, script))
+                  }
+                } else if kind == "explore" {
+                  let seed = match num_field(it, "seed", errors, where_) {
+                    Some(v) => v.to_int()
+                    None => 1
+                  }
+                  let frames = match num_field(it, "frames", errors, where_) {
+                    Some(v) => v.to_int()
+                    None => 600
+                  }
+                  if frames <= 0 {
+                    errors.push("\{where_} frames 必须为正（got \{frames}）")
+                  } else {
+                    out.push(@kernel.policy_explore(name, seed, frames))
+                  }
+                } else if kind == "" {
+                  errors.push("\{where_} 缺 kind（可用：script / explore）")
+                } else {
+                  errors.push("\{where_} kind '\{kind}' 未注册（可用：script / explore）")
+                }
+                idx = idx + 1
+              }
+            }
+            None => errors.push("policies.json: policies 需为数组")
+          }
+        None => errors.push("policies.json: 顶层缺 policies 数组")
+      }
+  }
+  (out, errors, warnings)
+}
+
+// ---------------- criteria.json 解码（游戏专属标准 + 偏好序）----------------
+
+///|
+/// criteria.json → (标准集, 偏好序)
+///
+/// 两条 P0 门禁：未知度量名拒绝、未知运算符拒绝。
+/// 理由：标准写错名字却"通过了"，比标准失败危险得多——那是假证据。
+pub fn decode_criteria(
+  text : String
+) -> (Array[@kernel.Criterion], Array[String], Array[String], Array[String]) {
+  let errors : Array[String] = []
+  let warnings : Array[String] = []
+  let out : Array[@kernel.Criterion] = []
+  let prefer : Array[String] = []
+  let (parsed, jerrs) = parse_text(text)
+  for e in jerrs {
+    errors.push(e)
+  }
+  match parsed {
+    None => ()
+    Some(root) => {
+      match json_get(root, "criteria") {
+        Some(cv) =>
+          match json_as_arr(cv) {
+            Some(items) => {
+              let mut idx = 0
+              for it in items {
+                let where_ = "criteria.json: criteria[\{idx}]"
+                let name = str_field(it, "name", "criterion\{idx}", errors, where_)
+                let metric = str_field(it, "metric", "", errors, where_)
+                let op = str_field(it, "op", ">=", errors, where_)
+                let value = match num_field(it, "value", errors, where_) {
+                  Some(v) => v.to_int()
+                  None => 0
+                }
+                let mut bad = false
+                if metric.length() == 0 {
+                  errors.push("\{where_} 缺 metric")
+                  bad = true
+                } else if !@kernel.known_metric(metric) {
+                  errors.push("\{where_} 未知度量 '\{metric}'（可用：见 trace 输出的 known_metrics）")
+                  bad = true
+                }
+                if op != "==" && op != "!=" && op != ">=" && op != "<=" {
+                  errors.push("\{where_} 非法运算符 '\{op}'（可用：== != >= <=）")
+                  bad = true
+                }
+                if !bad {
+                  out.push({ name: name, metric: metric, op: op, value: value })
+                }
+                idx = idx + 1
+              }
+            }
+            None => errors.push("criteria.json: criteria 需为数组")
+          }
+        None => errors.push("criteria.json: 顶层缺 criteria 数组")
+      }
+      // 显式偏好序（RGC 的 explicit textual preferences）
+      match json_get(root, "prefer") {
+        Some(pv) =>
+          match json_as_arr(pv) {
+            Some(items) => {
+              let mut pi = 0
+              for it in items {
+                match json_as_str(it) {
+                  Some(k) =>
+                    if @kernel.known_metric(k) {
+                      prefer.push(k)
+                    } else {
+                      errors.push("criteria.json: prefer[\{pi}] 未知度量 '\{k}'")
+                    }
+                  None => errors.push("criteria.json: prefer[\{pi}] 需为字符串")
+                }
+                pi = pi + 1
+              }
+            }
+            None => errors.push("criteria.json: prefer 需为数组")
+          }
+        None => ()
+      }
+    }
+  }
+  (out, prefer, errors, warnings)
+}
+
 // ---------------- parser 分派 ----------------
 
 ///|
 /// 已知 parser 名（自省用：指引里写了未注册的 parser 要报错，不是静默忽略）
 pub fn known_parser(name : String) -> Bool {
-  name == "json_level" || name == "json_probes" || name == "inline" || name == "empty" || name == "runtime"
+  if name == "json_level" {
+    true
+  } else if name == "json_probes" {
+    true
+  } else if name == "json_policies" {
+    true
+  } else if name == "json_criteria" {
+    true
+  } else if name == "inline" {
+    true
+  } else if name == "empty" {
+    true
+  } else {
+    name == "runtime"
+  }
+}
+
+///|
+/// 可用 parser 清单（写进拒绝理由——agent 要能自我修正）
+fn parser_menu() -> String {
+  "json_level / json_probes / json_policies / json_criteria / inline / empty / runtime"
 }
 
 ///|
@@ -453,7 +647,7 @@ pub fn run_parser(parser : String, text : String?, mode : String) -> (Payload, A
   let errors : Array[String] = []
   let warnings : Array[String] = []
   if !known_parser(parser) {
-    errors.push("未注册的 parser '\{parser}'（可用：json_level / json_probes / inline / empty / runtime）")
+    errors.push("未注册的 parser '\{parser}'（可用：\{parser_menu()})")
     return (Payload::Empty, errors, warnings)
   }
   match parser {
@@ -493,6 +687,28 @@ pub fn run_parser(parser : String, text : String?, mode : String) -> (Payload, A
         Some(t) => {
           let (ps, es, ws) = decode_probes(t)
           (Payload::Probes(ps), es, ws)
+        }
+      }
+    "json_policies" =>
+      match text {
+        None => {
+          errors.push("json_policies 源文件缺失或不可读")
+          (Payload::Empty, errors, warnings)
+        }
+        Some(t) => {
+          let (ps, es, ws) = decode_policies(t)
+          (Payload::Policies(ps), es, ws)
+        }
+      }
+    "json_criteria" =>
+      match text {
+        None => {
+          errors.push("json_criteria 源文件缺失或不可读")
+          (Payload::Empty, errors, warnings)
+        }
+        Some(t) => {
+          let (cs, pf, es, ws) = decode_criteria(t)
+          (Payload::Criteria(cs, pf), es, ws)
         }
       }
     _ => (Payload::Empty, errors, warnings)
@@ -576,6 +792,21 @@ pub fn assemble(g : GuideSpec, reader : (String) -> String?) -> Assembly {
       Payload::Probes(ps) => {
         for p in ps {
           spec.probes.push(p)
+        }
+        loaded.push("\{s.name}(\{s.parser})")
+      }
+      Payload::Policies(ps) => {
+        for p in ps {
+          spec.policies.push(p)
+        }
+        loaded.push("\{s.name}(\{s.parser})")
+      }
+      Payload::Criteria(cs, pf) => {
+        for c in cs {
+          spec.criteria.push(c)
+        }
+        for k in pf {
+          spec.prefer.push(k)
         }
         loaded.push("\{s.name}(\{s.parser})")
       }
